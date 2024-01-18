@@ -11,12 +11,16 @@ on:
 
 jobs:
   appimage:
-    runs-on: ubuntu-16.04
+    runs-on: ubuntu-latest
     # Waiting https://github.com/linuxdeploy/linuxdeploy/issues/154 fixed
-    # container: "ubuntu:16.04"
+    container: "ubuntu:18.04"
     steps:
       - name: Checkout
         uses: actions/checkout@v2
+      - name: Install Dependencies
+        run: |
+          apt-get update
+          apt-get install -y sudo ca-certificates
       - name: Build AppImage
         run:  sudo .github/workflows/build_appimage.sh
       - uses: actions/upload-artifact@v2
@@ -34,6 +38,10 @@ jobs:
           tag: ${{ github.ref }}
           overwrite: true
           file_glob: true
+      - name: Setup tmate session
+        if: failure()
+        uses: mxschmitt/action-tmate@v3
+        timeout-minutes: 15
 
   # cross compile for some other platforms, like arm, mips, etc.
   cross-compile:
@@ -66,9 +74,9 @@ jobs:
           - cross_host: x86_64-linux-musl
             openssl_compiler: linux-x86_64
             qt_device: linux-generic-g++
-          - cross_host: x86_64-w64-mingw32
-            openssl_compiler: mingw64
-            qt_xplatform: win32-g++
+          # - cross_host: x86_64-w64-mingw32
+          #   openssl_compiler: mingw64
+          #   qt_xplatform: win32-g++
     steps:
       - name: Checkout
         uses: actions/checkout@v2
@@ -92,3 +100,7 @@ jobs:
           file: ".github/workflows/qbittorrent-nox_${{ matrix.cross_host }}_static.zip"
           tag: ${{ github.ref }}
           overwrite: true
+      - name: Setup tmate session
+        if: failure()
+        uses: mxschmitt/action-tmate@v3
+        timeout-minutes: 15

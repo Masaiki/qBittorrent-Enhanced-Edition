@@ -4,15 +4,16 @@ on: [pull_request, push]
 jobs:
   ci:
     name: Build
-    runs-on: macos-10.15
+    runs-on: macos-12
 
     strategy:
       matrix:
-        libt_version: ["v1.2.12"]
+        libt_version: ["v1.2.19"]
         qbt_gui: ["GUI=ON", "GUI=OFF"]
       fail-fast: false
 
     env:
+      boost_path: "${{ github.workspace }}/../boost"
       openssl_root: /usr/local/opt/openssl@1.1
 
     steps:
@@ -29,12 +30,21 @@ jobs:
           brew update > /dev/null
           brew install \
             cmake ninja \
-            boost openssl@1.1 qt@5 zlib
+            openssl@1.1 qt@5 zlib
           brew link --force \
             qt@5
           # workaround for cmake + Qt
           sudo ln -s /usr/local/opt/qt@5/mkspecs /usr/local/mkspecs
           sudo ln -s /usr/local/opt/qt@5/plugins /usr/local/plugins
+
+      - name: Install boost
+        run: |
+          curl \
+            -L \
+            -o "${{ runner.temp }}/boost.tar.bz2" \
+            "https://boostorg.jfrog.io/artifactory/main/release/1.83.0/source/boost_1_83_0.tar.bz2"
+          tar -xf "${{ runner.temp }}/boost.tar.bz2" -C "${{ github.workspace }}/.."
+          mv "${{ github.workspace }}/.."/boost_* "${{ env.boost_path }}"
 
       - name: Install libtorrent
         run: |
@@ -47,6 +57,8 @@ jobs:
             -G "Ninja" \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_CXX_STANDARD=17 \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DBOOST_ROOT="${{ env.boost_path }}" \
             -Ddeprecated-functions=OFF \
             -DOPENSSL_ROOT_DIR="${{ env.openssl_root }}"
           cmake --build build
@@ -59,15 +71,33 @@ jobs:
             -B build \
             -G "Ninja" \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -D${{ matrix.qbt_gui }} \
+            -DBOOST_ROOT="${{ env.boost_path }}" \
             -DVERBOSE_CONFIGURE=ON \
             -DOPENSSL_ROOT_DIR="${{ env.openssl_root }}"
           cmake --build build
 
+      - name: Prepare build artifacts
+        run: |
+          # create .dmg
+          appName="qbittorrent"
+          if [ "${{ matrix.qbt_gui }}" = "GUI=OFF" ]; then
+            appName="qbittorrent-nox"
+          fi
+          pushd build
+          macdeployqt "$appName.app" -dmg -no-strip
+          popd
+          # prepare upload folder
+          mkdir upload
+          cp "build/$appName.dmg" upload
+          mkdir upload/cmake
+          cp build/compile_commands.json upload/cmake
+          mkdir upload/cmake/libtorrent
+          cp libtorrent/build/compile_commands.json upload/cmake/libtorrent
+
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v3
         with:
           name: qBittorrent-CI_macOS_${{ matrix.qbt_gui }}_libtorrent-${{ matrix.libt_version }}
-          path: |
-            build/qbittorrent.app
-            build/qbittorrent-nox.app
+          path: upload

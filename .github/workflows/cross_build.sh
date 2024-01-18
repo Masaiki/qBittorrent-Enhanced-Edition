@@ -123,10 +123,10 @@ sed -i "s/using gcc.*/using gcc : cross : ${CROSS_HOST}-g++ ;/" project-config.j
 qt_major_ver="$(wget -qO- https://download.qt.io/official_releases/qt/ | sed -nr 's@.*href="([0-9]+(\.[0-9]+)*)/".*@\1@p' | grep "^${QT_VER_PREFIX}" | head -1)"
 qt_ver="$(wget -qO- https://download.qt.io/official_releases/qt/${qt_major_ver}/ | sed -nr 's@.*href="([0-9]+(\.[0-9]+)*)/".*@\1@p' | grep "^${QT_VER_PREFIX}" | head -1)"
 echo "Using qt version: ${qt_ver}"
-qtbase_url="https://download.qt.io/official_releases/qt/${qt_major_ver}/${qt_ver}/submodules/qtbase-everywhere-src-${qt_ver}.tar.xz"
-qtbase_filename="qtbase-everywhere-src-${qt_ver}.tar.xz"
-qttools_url="https://download.qt.io/official_releases/qt/${qt_major_ver}/${qt_ver}/submodules/qttools-everywhere-src-${qt_ver}.tar.xz"
-qttools_filename="qttools-everywhere-src-${qt_ver}.tar.xz"
+qtbase_url="https://download.qt.io/official_releases/qt/${qt_major_ver}/${qt_ver}/submodules/qtbase-everywhere-opensource-src-${qt_ver}.tar.xz"
+qtbase_filename="qtbase-everywhere-opensource-src-${qt_ver}.tar.xz"
+qttools_url="https://download.qt.io/official_releases/qt/${qt_major_ver}/${qt_ver}/submodules/qttools-everywhere-opensource-src-${qt_ver}.tar.xz"
+qttools_filename="qttools-everywhere-opensource-src-${qt_ver}.tar.xz"
 if [ ! -f "${SELF_DIR}/${qtbase_filename}" ]; then
   wget -c -O "${SELF_DIR}/${qtbase_filename}" "${qtbase_url}"
 fi
