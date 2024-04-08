@@ -3,18 +3,25 @@ on: [pull_request, push]
 
 jobs:
   ci:
-    name: Build
-    runs-on: macos-12
-
     strategy:
       matrix:
-        libt_version: ["v1.2.19"]
-        qbt_gui: ["GUI=ON", "GUI=OFF"]
+        include:
+          - arch: x86
+            os: macos-13
+            libt_version: "v1.2.19"
+            qbt_gui: "GUI=ON"
+            brew_install_dir: "/usr/local"
+          - arch: arm
+            os: macos-14
+            libt_version: "v1.2.19"
+            qbt_gui: "GUI=ON"
+            brew_install_dir: "/opt/homebrew"
       fail-fast: false
+    runs-on: ${{ matrix.os }}
+    name: macOS ${{ matrix.arch }} Build
 
     env:
       boost_path: "${{ github.workspace }}/../boost"
-      openssl_root: /usr/local/opt/openssl@1.1
 
     steps:
       - name: Checkout repository
@@ -34,8 +41,9 @@ jobs:
           brew link --force \
             qt@5
           # workaround for cmake + Qt
-          sudo ln -s /usr/local/opt/qt@5/mkspecs /usr/local/mkspecs
-          sudo ln -s /usr/local/opt/qt@5/plugins /usr/local/plugins
+          sudo ln -s ${{ matrix.brew_install_dir }}/opt/qt@5/mkspecs ${{ matrix.brew_install_dir }}/mkspecs
+          sudo ln -s ${{ matrix.brew_install_dir }}/opt/qt@5/plugins ${{ matrix.brew_install_dir }}/plugins
+          echo "OPENSSL_ROOT_DIR=${{ matrix.brew_install_dir }}/opt/openssl@1.1" >> $GITHUB_ENV
 
       - name: Install boost
         run: |
@@ -51,7 +59,7 @@ jobs:
           git clone --branch ${{ matrix.libt_version }} --depth 1 https://github.com/arvidn/libtorrent.git
           cd libtorrent
           git submodule update --init --recursive
-          export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"
+          export PATH="/usr/lib/ccache:${{ matrix.brew_install_dir }}/opt/ccache/libexec:$PATH"
           cmake \
             -B build \
             -G "Ninja" \
@@ -60,13 +68,13 @@ jobs:
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DBOOST_ROOT="${{ env.boost_path }}" \
             -Ddeprecated-functions=OFF \
-            -DOPENSSL_ROOT_DIR="${{ env.openssl_root }}"
+            -DOPENSSL_ROOT_DIR="$OPENSSL_ROOT_DIR"
           cmake --build build
           sudo cmake --install build
 
       - name: Build qBittorrent
         run: |
-          export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"
+          export PATH="/usr/lib/ccache:${{ matrix.brew_install_dir }}/opt/ccache/libexec:$PATH"
           cmake \
             -B build \
             -G "Ninja" \
@@ -75,7 +83,7 @@ jobs:
             -D${{ matrix.qbt_gui }} \
             -DBOOST_ROOT="${{ env.boost_path }}" \
             -DVERBOSE_CONFIGURE=ON \
-            -DOPENSSL_ROOT_DIR="${{ env.openssl_root }}"
+            -DOPENSSL_ROOT_DIR="$OPENSSL_ROOT_DIR"
           cmake --build build
 
       - name: Prepare build artifacts
@@ -99,5 +107,5 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v3
         with:
-          name: qBittorrent-CI_macOS_${{ matrix.qbt_gui }}_libtorrent-${{ matrix.libt_version }}
+          name: qBittorrent-CI_macOS_${{ matrix.qbt_gui }}_libtorrent-${{ matrix.libt_version }}_${{ matrix.arch }}
           path: upload
