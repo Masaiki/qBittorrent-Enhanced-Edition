@@ -41,6 +41,8 @@ src/icons/skin/build-icons/icons/*.png
 
 # CMake build directory
 build/
+build-ci-*/
+build-local-*/
 
 # Web UI tools
 node_modules
