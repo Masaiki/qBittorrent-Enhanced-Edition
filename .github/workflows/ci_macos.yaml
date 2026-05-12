@@ -7,105 +7,95 @@ jobs:
       matrix:
         include:
           - arch: x86
-            os: macos-13
-            libt_version: "v1.2.19"
-            qbt_gui: "GUI=ON"
-            brew_install_dir: "/usr/local"
-          - arch: arm
+            target_arch: x86_64
             os: macos-14
-            libt_version: "v1.2.19"
+            libt_version: "v1.2.20"
             qbt_gui: "GUI=ON"
-            brew_install_dir: "/opt/homebrew"
+          - arch: arm
+            target_arch: arm64
+            os: macos-14
+            libt_version: "v1.2.20"
+            qbt_gui: "GUI=ON"
       fail-fast: false
     runs-on: ${{ matrix.os }}
     name: macOS ${{ matrix.arch }} Build
 
     env:
-      boost_path: "${{ github.workspace }}/../boost"
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+      QT_VERSION: "5.15.18"
+      OPENSSL_VERSION: "1.1.1w"
+      BOOST_VERSION: "1.86.0"
+      DEPS_PREFIX: "${{ github.workspace }}/../macos-deps-${{ matrix.target_arch }}"
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v5
 
       - name: Setup ccache
-        uses: hendrikmuhs/ccache-action@v1
+        uses: hendrikmuhs/ccache-action@v1.2
         with:
-          key: ${{ runner.os }}
+          key: ${{ runner.os }}-${{ matrix.target_arch }}
 
-      - name: Install dependencies
+      - name: Install host tools
         run: |
           brew update > /dev/null
           brew install \
-            cmake ninja \
-            openssl@1.1 qt@5 zlib
-          brew link --force \
-            qt@5
-          # workaround for cmake + Qt
-          sudo ln -s ${{ matrix.brew_install_dir }}/opt/qt@5/mkspecs ${{ matrix.brew_install_dir }}/mkspecs
-          sudo ln -s ${{ matrix.brew_install_dir }}/opt/qt@5/plugins ${{ matrix.brew_install_dir }}/plugins
-          echo "OPENSSL_ROOT_DIR=${{ matrix.brew_install_dir }}/opt/openssl@1.1" >> $GITHUB_ENV
+            cmake ninja ccache pkgconf
 
-      - name: Install boost
-        run: |
-          curl \
-            -L \
-            -o "${{ runner.temp }}/boost.tar.bz2" \
-            "https://boostorg.jfrog.io/artifactory/main/release/1.83.0/source/boost_1_83_0.tar.bz2"
-          tar -xf "${{ runner.temp }}/boost.tar.bz2" -C "${{ github.workspace }}/.."
-          mv "${{ github.workspace }}/.."/boost_* "${{ env.boost_path }}"
+      - name: Cache source-built dependencies
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.DEPS_PREFIX }}
+          key: macos-${{ matrix.target_arch }}-qt-${{ env.QT_VERSION }}-openssl-${{ env.OPENSSL_VERSION }}-boost-${{ env.BOOST_VERSION }}-libtorrent-${{ matrix.libt_version }}-${{ hashFiles('.github/workflows/build_macos_deps.sh') }}
 
-      - name: Install libtorrent
-        run: |
-          git clone --branch ${{ matrix.libt_version }} --depth 1 https://github.com/arvidn/libtorrent.git
-          cd libtorrent
-          git submodule update --init --recursive
-          export PATH="/usr/lib/ccache:${{ matrix.brew_install_dir }}/opt/ccache/libexec:$PATH"
-          cmake \
-            -B build \
-            -G "Ninja" \
-            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DCMAKE_CXX_STANDARD=17 \
-            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-            -DBOOST_ROOT="${{ env.boost_path }}" \
-            -Ddeprecated-functions=OFF \
-            -DOPENSSL_ROOT_DIR="$OPENSSL_ROOT_DIR"
-          cmake --build build
-          sudo cmake --install build
+      - name: Build dependencies
+        env:
+          TARGET_ARCH: ${{ matrix.target_arch }}
+          LIBTORRENT_VERSION: ${{ matrix.libt_version }}
+          BUILD_ROOT: ${{ runner.temp }}/macos-deps-build-${{ matrix.target_arch }}
+        run: .github/workflows/build_macos_deps.sh
 
       - name: Build qBittorrent
         run: |
-          export PATH="/usr/lib/ccache:${{ matrix.brew_install_dir }}/opt/ccache/libexec:$PATH"
           cmake \
-            -B build \
+            -B build-${{ matrix.target_arch }} \
             -G "Ninja" \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DCMAKE_OSX_ARCHITECTURES="${{ matrix.target_arch }}" \
+            -DCMAKE_IGNORE_PREFIX_PATH="$CMAKE_IGNORE_PREFIX_PATH" \
+            -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" \
             -D${{ matrix.qbt_gui }} \
-            -DBOOST_ROOT="${{ env.boost_path }}" \
+            -DBOOST_ROOT="$BOOST_ROOT" \
+            -DBoost_ROOT="$BOOST_ROOT" \
             -DVERBOSE_CONFIGURE=ON \
-            -DOPENSSL_ROOT_DIR="$OPENSSL_ROOT_DIR"
-          cmake --build build
+            -DOPENSSL_ROOT_DIR="$OPENSSL_ROOT_DIR" \
+            -DOPENSSL_INCLUDE_DIR="$OPENSSL_ROOT_DIR/include" \
+            -DOPENSSL_SSL_LIBRARY="$OPENSSL_ROOT_DIR/lib/libssl.dylib" \
+            -DOPENSSL_CRYPTO_LIBRARY="$OPENSSL_ROOT_DIR/lib/libcrypto.dylib" \
+            -DQt5_DIR="$QT_ROOT/lib/cmake/Qt5"
+          cmake --build build-${{ matrix.target_arch }}
 
       - name: Prepare build artifacts
         run: |
-          # create .dmg
           appName="qbittorrent"
           if [ "${{ matrix.qbt_gui }}" = "GUI=OFF" ]; then
             appName="qbittorrent-nox"
           fi
-          pushd build
-          macdeployqt "$appName.app" -dmg -no-strip
+
+          pushd build-${{ matrix.target_arch }}
+          "$QT_ROOT/bin/macdeployqt" "$appName.app" -dmg -no-strip
           popd
-          # prepare upload folder
+
           mkdir upload
-          cp "build/$appName.dmg" upload
+          cp "build-${{ matrix.target_arch }}/$appName.dmg" upload
           mkdir upload/cmake
-          cp build/compile_commands.json upload/cmake
+          cp build-${{ matrix.target_arch }}/compile_commands.json upload/cmake
           mkdir upload/cmake/libtorrent
-          cp libtorrent/build/compile_commands.json upload/cmake/libtorrent
+          cp libtorrent/build-${{ matrix.target_arch }}/compile_commands.json upload/cmake/libtorrent
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v6
         with:
           name: qBittorrent-CI_macOS_${{ matrix.qbt_gui }}_libtorrent-${{ matrix.libt_version }}_${{ matrix.arch }}
           path: upload

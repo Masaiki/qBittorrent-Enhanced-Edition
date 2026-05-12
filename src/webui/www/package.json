@@ -10,8 +10,8 @@
     "lint": "eslint private/*.html private/scripts/*.js private/views/*.html public/*.html public/scripts/*.js"
   },
   "devDependencies": {
-    "eslint": "*",
-    "eslint-plugin-html": "*",
-    "js-beautify": "*"
+    "eslint": "8.57.1",
+    "eslint-plugin-html": "8.1.3",
+    "js-beautify": "1.15.4"
   }
 }

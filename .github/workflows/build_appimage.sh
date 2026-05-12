@@ -5,13 +5,15 @@
 # Artifacts will copy to the same directory.
 
 # Ubuntu mirror for local building
-source /etc/os-release
-cat >/etc/apt/sources.list <<EOF
-deb http://opentuna.cn/ubuntu/ ${UBUNTU_CODENAME} main restricted universe multiverse
-deb http://opentuna.cn/ubuntu/ ${UBUNTU_CODENAME}-updates main restricted universe multiverse
-deb http://opentuna.cn/ubuntu/ ${UBUNTU_CODENAME}-backports main restricted universe multiverse
-deb http://opentuna.cn/ubuntu/ ${UBUNTU_CODENAME}-security main restricted universe multiverse
+if [ -n "${UBUNTU_MIRROR:-}" ]; then
+  source /etc/os-release
+  cat >/etc/apt/sources.list <<EOF
+deb ${UBUNTU_MIRROR} ${UBUNTU_CODENAME} main restricted universe multiverse
+deb ${UBUNTU_MIRROR} ${UBUNTU_CODENAME}-updates main restricted universe multiverse
+deb ${UBUNTU_MIRROR} ${UBUNTU_CODENAME}-backports main restricted universe multiverse
+deb ${UBUNTU_MIRROR} ${UBUNTU_CODENAME}-security main restricted universe multiverse
 EOF
+fi
 export PIP_INDEX_URL="https://mirrors.aliyun.com/pypi/simple/"
 
 apt update
@@ -31,6 +33,7 @@ apt install -y --no-install-suggests --no-install-recommends \
   zlib1g-dev \
   libssl-dev \
   libtool \
+  p7zip-full \
   python3-semantic-version \
   python3-lxml \
   python3-requests \
@@ -59,9 +62,18 @@ export PYTHONWARNINGS=ignore:DEPRECATION
 
 # install qt
 if [ ! -d "${HOME}/Qt" ]; then
-  pip3 install --upgrade 'pip<21' 'setuptools<51' 'setuptools_scm<6'
-  pip3 install py7zr
-  curl -sSkL --compressed https://raw.githubusercontent.com/engnr/qt-downloader/master/qt-downloader | python3 - linux desktop 5.15.2 gcc_64 -o "${HOME}/Qt" -m qtbase qttools qtsvg icu
+  mkdir -p "${HOME}/Qt"
+  qt_repo_url="https://download.qt.io/online/qtsdkrepository/linux_x64/desktop/qt5_5152/qt.qt5.5152.gcc_64"
+  qt_packages="
+    5.15.2-0-202011130601icu-linux-Rhel7.2-x64.7z
+    5.15.2-0-202011130601qtbase-Linux-RHEL_7_6-GCC-Linux-RHEL_7_6-X86_64.7z
+    5.15.2-0-202011130601qtsvg-Linux-RHEL_7_6-GCC-Linux-RHEL_7_6-X86_64.7z
+    5.15.2-0-202011130601qttools-Linux-RHEL_7_6-GCC-Linux-RHEL_7_6-X86_64.7z
+  "
+  for qt_package in ${qt_packages}; do
+    curl -fL --retry 3 --retry-delay 5 -o "/tmp/${qt_package}" "${qt_repo_url}/${qt_package}"
+    7z x -y -o"${HOME}/Qt" "/tmp/${qt_package}"
+  done
 fi
 export QT_BASE_DIR="$(ls -rd "${HOME}/Qt"/*/gcc_64 | head -1)"
 export QTDIR=$QT_BASE_DIR
@@ -71,21 +83,25 @@ export PKG_CONFIG_PATH=$QT_BASE_DIR/lib/pkgconfig:$PKG_CONFIG_PATH
 export QT_QMAKE="${QT_BASE_DIR}/bin"
 sed -i.bak 's/Enterprise/OpenSource/g;s/licheck.*//g' "${QT_BASE_DIR}/mkspecs/qconfig.pri"
 
-# build latest boost
+BOOST_VERSION="${BOOST_VERSION:-1.86.0}"
+BOOST_FILENAME="$(echo "boost_${BOOST_VERSION}" | tr . _)"
+
+# build boost
 mkdir -p /usr/src/boost
 if [ ! -f /usr/src/boost/.unpack_ok ]; then
-  boost_latest_url="$(curl -ksSfL https://www.boost.org/users/download/ | grep -o 'http[^"]*.tar.bz2' | head -1)"
-  curl -ksSfL "${boost_latest_url}" | tar -jxf - -C /usr/src/boost --strip-components 1
+  curl -fL --retry 3 --retry-delay 5 "https://archives.boost.io/release/${BOOST_VERSION}/source/${BOOST_FILENAME}.tar.bz2" |
+    tar -jxf - -C /usr/src/boost --strip-components 1
 fi
 touch "/usr/src/boost/.unpack_ok"
 cd /usr/src/boost
 ./bootstrap.sh
 ./b2 install --with-system variant=release
+ldconfig
 
 # build libtorrent-rasterbar
 mkdir -p /usr/src/libtorrent-rasterbar
 [ -f /usr/src/libtorrent-rasterbar/.unpack_ok ] ||
-  curl -ksSfL https://github.com/arvidn/libtorrent/archive/RC_1_2.tar.gz |
+  curl -ksSfL https://github.com/arvidn/libtorrent/archive/v1.2.20.tar.gz |
   tar -zxf - -C /usr/src/libtorrent-rasterbar --strip-components 1
 touch "/usr/src/libtorrent-rasterbar/.unpack_ok"
 cd "/usr/src/libtorrent-rasterbar/"
@@ -93,6 +109,7 @@ CXXFLAGS="-std=c++17" CPPFLAGS="-std=c++17" ./bootstrap.sh --prefix=/usr --with-
 make clean
 make -j$(nproc)
 make install
+ldconfig
 
 # build qbittorrent
 cd "${SELF_DIR}/../../"
