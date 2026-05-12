@@ -14,19 +14,11 @@ jobs:
         run: |
           choco install ninja
 
-      # use the preinstalled vcpkg from image
-      # https://github.com/actions/runner-images/blob/main/images/windows/Windows2022-Readme.md#package-management
       - name: Setup vcpkg environment
-        run: |
-          if (-not $env:VCPKG_INSTALLATION_ROOT) {
-            $env:VCPKG_INSTALLATION_ROOT = "C:/vcpkg"
-          }
-          $vcpkgCommit = "d5ec528843d29e3a52d745a64b469f810b2cedbf" # 2025.02.14, Boost 1.86.0
-          git -C "$env:VCPKG_INSTALLATION_ROOT" fetch --depth=1 origin $vcpkgCommit
-          git -C "$env:VCPKG_INSTALLATION_ROOT" checkout --force $vcpkgCommit
-          & "$env:VCPKG_INSTALLATION_ROOT/bootstrap-vcpkg.bat" -disableMetrics
-          "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
-          & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" version
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: "d5ec528843d29e3a52d745a64b469f810b2cedbf"
+          vcpkgDirectory: "C:/vcpkg"
 
       # tell vcpkg to only build Release variants of the dependencies
       - name: Configure vcpkg triplet overlay
