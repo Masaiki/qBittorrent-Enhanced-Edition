@@ -81,6 +81,7 @@ jobs:
             -DCMAKE_EXE_LINKER_FLAGS=Mpr.lib ^
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON ^
             -DCMAKE_PREFIX_PATH=%CD%/libtorrent-install ^
+            -DCMAKE_PROJECT_INCLUDE=%CD%/cmake/StaticQtPlugins.cmake ^
             -DMSVC_RUNTIME_DYNAMIC=OFF ^
             -DVERBOSE_CONFIGURE=ON ^
             --graphviz=build/target_graph.dot
