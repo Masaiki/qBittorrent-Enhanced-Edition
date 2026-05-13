@@ -4,14 +4,21 @@ on: [pull_request, push]
 jobs:
   ci:
     name: Build (${{ matrix.arch }})
-    runs-on: windows-2022
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - arch: x64
             conan_profile: windows-x64-release
+            conan_build_profile: windows-x64-release
+            runner: windows-2022
             vcvars: vcvars64.bat
+          - arch: arm64
+            conan_profile: windows-arm64-release
+            conan_build_profile: windows-arm64-release
+            runner: windows-11-arm
+            vcvars: vcvarsarm64.bat
 
     env:
       LIBTORRENT_VERSION: "1.2.20"
@@ -42,7 +49,7 @@ jobs:
           call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\${{ matrix.vcvars }}"
           conan install . ^
             --profile:host=conan/profiles/${{ matrix.conan_profile }} ^
-            --profile:build=conan/profiles/windows-x64-release ^
+            --profile:build=conan/profiles/${{ matrix.conan_build_profile }} ^
             --output-folder=build ^
             --build=missing
 
