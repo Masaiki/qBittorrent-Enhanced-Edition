@@ -18,7 +18,7 @@ function(_qbt_setup_static_qt_plugins)
     # Conan CMakeDeps creates non-GLOBAL IMPORTED targets, so they are only
     # visible in the subdirectory scope where find_package() was called.
     # Re-run find_package here to make the targets visible in this scope.
-    find_package(Qt5 COMPONENTS Core Gui QUIET)
+    find_package(Qt5 COMPONENTS Core Gui Svg QUIET)
 
     if(NOT TARGET Qt5::Core)
         message(STATUS "StaticQtPlugins: Qt5::Core target not found after re-find, skipping")
@@ -56,6 +56,22 @@ function(_qbt_setup_static_qt_plugins)
         else()
             message(FATAL_ERROR "StaticQtPlugins: Cannot find qwindows plugin lib")
         endif()
+    endif()
+
+    # Link image format plugins
+    if(TARGET Qt5::QICOPlugin)
+        target_link_libraries(qbt_app PRIVATE Qt5::QICOPlugin)
+        message(STATUS "StaticQtPlugins: Linked Qt5::QICOPlugin target")
+    endif()
+
+    # Link SVG plugins for icon rendering
+    if(TARGET Qt5::QSvgIconPlugin)
+        target_link_libraries(qbt_app PRIVATE Qt5::QSvgIconPlugin)
+        message(STATUS "StaticQtPlugins: Linked Qt5::QSvgIconPlugin target")
+    endif()
+    if(TARGET Qt5::QSvgPlugin)
+        target_link_libraries(qbt_app PRIVATE Qt5::QSvgPlugin)
+        message(STATUS "StaticQtPlugins: Linked Qt5::QSvgPlugin target")
     endif()
 
     # Windows system libraries required by QWindowsIntegrationPlugin

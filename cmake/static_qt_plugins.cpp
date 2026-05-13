@@ -8,4 +8,7 @@
 #if defined(Q_OS_WIN) && !defined(DISABLE_GUI)
 #include <QtPlugin>
 Q_IMPORT_PLUGIN(QWindowsIntegrationPlugin)
+Q_IMPORT_PLUGIN(QICOPlugin)
+Q_IMPORT_PLUGIN(QSvgIconPlugin)
+Q_IMPORT_PLUGIN(QSvgPlugin)
 #endif
