@@ -63,6 +63,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=RelWithDebInfo ^
             -DCMAKE_CXX_STANDARD=17 ^
             -DCMAKE_INSTALL_PREFIX=%CD%/libtorrent-install ^
+            -DBUILD_SHARED_LIBS=OFF ^
             -Dstatic_runtime=ON ^
             -Ddeprecated-functions=ON
           cmake --build libtorrent-build
