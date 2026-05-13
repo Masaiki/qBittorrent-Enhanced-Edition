@@ -247,6 +247,14 @@ const QString straceWin::getBacktrace()
     StackFrame.AddrBStore.Mode  = AddrModeFlat;
     StackFrame.AddrStack.Offset = Context.IntSp;
     StackFrame.AddrStack.Mode   = AddrModeFlat;
+#elif _M_ARM64
+    MachineType                 = IMAGE_FILE_MACHINE_ARM64;
+    StackFrame.AddrPC.Offset    = Context.Pc;
+    StackFrame.AddrPC.Mode      = AddrModeFlat;
+    StackFrame.AddrFrame.Offset = Context.Fp;
+    StackFrame.AddrFrame.Mode   = AddrModeFlat;
+    StackFrame.AddrStack.Offset = Context.Sp;
+    StackFrame.AddrStack.Mode   = AddrModeFlat;
 #else
 #error "Unsupported platform"
 #endif
