@@ -3,8 +3,22 @@ on: [pull_request, push]
 
 jobs:
   ci:
-    name: Build
-    runs-on: windows-2022
+    name: Build (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-2022
+            target_arch: x64
+            vcvars: vcvars64.bat
+            vcpkg_triplet: x64-windows-static-release
+          - arch: arm64
+            runner: windows-11-arm
+            target_arch: arm64
+            vcvars: vcvarsarm64.bat
+            vcpkg_triplet: arm64-windows-static-release
 
     steps:
       - name: Checkout repository
@@ -36,19 +50,20 @@ jobs:
             -Path "${{ github.workspace }}" `
             -Name "triplets_overlay" `
             -ItemType Directory
-          Copy-Item `
-            "$env:VCPKG_ROOT/triplets/x64-windows-static.cmake" `
-            "${{ github.workspace }}/triplets_overlay/x64-windows-static-release.cmake"
-          Add-Content `
-            "${{ github.workspace }}/triplets_overlay/x64-windows-static-release.cmake" `
-            -Value "set(VCPKG_BUILD_TYPE release)"
+          @"
+          set(VCPKG_TARGET_ARCHITECTURE ${{ matrix.target_arch }})
+          set(VCPKG_CRT_LINKAGE static)
+          set(VCPKG_LIBRARY_LINKAGE static)
+          set(VCPKG_BUILD_TYPE release)
+          "@ | Set-Content "${{ github.workspace }}/triplets_overlay/${{ matrix.vcpkg_triplet }}.cmake"
 
       # clear buildtrees after each package installation to reduce disk space requirements
       - name: Install dependencies
         run: |
           & "$env:VCPKG_ROOT/vcpkg.exe" install `
             --x-manifest-root="${{ github.workspace }}" `
-            --triplet=x64-windows-static-release `
+            --triplet=${{ matrix.vcpkg_triplet }} `
+            --host-triplet=${{ matrix.vcpkg_triplet }} `
             --overlay-ports="${{ github.workspace }}/vcpkg" `
             --overlay-triplets="${{ github.workspace }}/triplets_overlay" `
             --clean-after-build
@@ -57,7 +72,7 @@ jobs:
         shell: cmd
         run: |
           set "CI_VCPKG_ROOT=%VCPKG_ROOT%"
-          call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\${{ matrix.vcvars }}"
           set "VCPKG_ROOT=%CI_VCPKG_ROOT%"
           cmake ^
             -B build ^
@@ -70,7 +85,8 @@ jobs:
             -DVCPKG_MANIFEST_DIR="${{ github.workspace }}" ^
             -DVCPKG_OVERLAY_PORTS="${{ github.workspace }}/vcpkg" ^
             -DVCPKG_OVERLAY_TRIPLETS="${{ github.workspace }}/triplets_overlay" ^
-            -DVCPKG_TARGET_TRIPLET=x64-windows-static-release ^
+            -DVCPKG_TARGET_TRIPLET=${{ matrix.vcpkg_triplet }} ^
+            -DVCPKG_HOST_TRIPLET=${{ matrix.vcpkg_triplet }} ^
             -DVERBOSE_CONFIGURE=ON ^
             --graphviz=build/target_graph.dot
           cmake --build build
@@ -78,7 +94,7 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v6
         with:
-          name: qBittorrent-CI_Windows-x64
+          name: qBittorrent-CI_Windows-${{ matrix.arch }}
           path: |
             build/compile_commands.json
             build/qbittorrent.exe
