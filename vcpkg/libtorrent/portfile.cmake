@@ -1,14 +1,14 @@
-vcpkg_fail_port_install(ON_TARGET "uwp")
-
 if(VCPKG_TARGET_IS_WINDOWS)
     # Building python bindings is currently broken on Windows
     if("python" IN_LIST FEATURES)
         message(FATAL_ERROR "The python feature is currently broken on Windows")
     endif()
 
-    if(NOT "iconv" IN_LIST FEATURES)
+    if("iconv" IN_LIST FEATURES)
+        set(ICONV_OPTION -Diconv=ON)
+    else()
         # prevent picking up libiconv if it happens to already be installed
-        set(ICONV_PATCH "no_use_iconv.patch")
+        set(ICONV_OPTION -Diconv=OFF)
     endif()
 
     if(VCPKG_CRT_LINKAGE STREQUAL "static")
@@ -17,11 +17,12 @@ if(VCPKG_TARGET_IS_WINDOWS)
 endif()
 
 vcpkg_check_features(OUT_FEATURE_OPTIONS FEATURE_OPTIONS
-    deprfun     deprecated-functions
-    examples    build_examples
-    python      python-bindings
-    test        build_tests
-    tools       build_tools
+    FEATURES
+        deprfun     deprecated-functions
+        examples    build_examples
+        python      python-bindings
+        test        build_tests
+        tools       build_tools
 )
 
 # Note: the python feature currently requires `python3-dev` and `python3-setuptools` installed on the system
@@ -40,8 +41,6 @@ vcpkg_from_github(
     REF v1.2.20
     SHA512 61319351ce305f67f3227523eae434cdcc1c069ff7f9e013f868b603ab6005c0927726ae0bdf19ef60c0298a02f4c9f322d92a6a35a7a66926524c3c0079698f
     HEAD_REF RC_1_2
-    PATCHES
-        ${ICONV_PATCH}
 )
 
 vcpkg_configure_cmake(
@@ -49,6 +48,7 @@ vcpkg_configure_cmake(
     PREFER_NINJA # Disable this option if project cannot be built with Ninja
     OPTIONS
         ${FEATURE_OPTIONS}
+        ${ICONV_OPTION}
         -DCMAKE_CXX_STANDARD=17
         -Dboost-python-module-name=${_boost-python-module-name}
         -Dstatic_runtime=${_static_runtime}
