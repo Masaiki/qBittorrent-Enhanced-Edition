@@ -11,6 +11,16 @@ package("libtorrent-rasterbar")
 
     add_deps("cmake", "boost", "openssl", "zlib")
 
+    on_fetch(function (package, opt)
+        local installdir = package:installdir()
+        return {
+            version = package:version_str(),
+            includedirs = path.join(installdir, "include"),
+            linkdirs = path.join(installdir, "lib"),
+            links = "torrent-rasterbar"
+        }
+    end)
+
     on_install("windows", function (package)
         local configs = {
             "-DCMAKE_CXX_STANDARD=17",
