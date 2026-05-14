@@ -21,7 +21,7 @@ function(_qbt_setup_static_qt_plugins)
     # Conan CMakeDeps creates non-GLOBAL IMPORTED targets, so they are only
     # visible in the subdirectory scope where find_package() was called.
     # Re-run find_package here to make the targets visible in this scope.
-    find_package(Qt5 COMPONENTS Core Gui Svg Sql QUIET)
+    find_package(Qt5 COMPONENTS Core Gui Svg Sql Network QUIET)
 
     if(NOT TARGET Qt5::Core)
         message(STATUS "StaticQtPlugins: Qt5::Core target not found after re-find, skipping")
@@ -75,12 +75,18 @@ function(_qbt_setup_static_qt_plugins)
     endif()
 
     # Image format plugins
-    foreach(_plugin QSvgPlugin QICOPlugin QGifPlugin QJpegPlugin)
+    foreach(_plugin QSvgPlugin QICOPlugin)
         if(TARGET Qt5::${_plugin})
             target_link_libraries(qbt_app PRIVATE Qt5::${_plugin})
             message(STATUS "StaticQtPlugins: Linked Qt5::${_plugin}")
         endif()
     endforeach()
+
+    # Network bearer engine plugin
+    if(TARGET Qt5::QGenericEnginePlugin)
+        target_link_libraries(qbt_app PRIVATE Qt5::QGenericEnginePlugin)
+        message(STATUS "StaticQtPlugins: Linked Qt5::QGenericEnginePlugin")
+    endif()
 
     # SQL driver plugin
     if(TARGET Qt5::QSQLiteDriverPlugin)
