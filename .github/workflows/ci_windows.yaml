@@ -79,6 +79,17 @@ jobs:
             --graphviz=build/target_graph.dot
           cmake --build build
 
+      - name: Show auto-imported Qt plugins
+        shell: cmd
+        run: |
+          echo === Searching for plugin_import files ===
+          dir /s /b build\*plugin_import* 2>nul
+          echo === Content of plugin import files ===
+          for /r build %%f in (*plugin_import*) do (
+            echo --- %%f ---
+            type "%%f"
+          )
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v6
         with:
