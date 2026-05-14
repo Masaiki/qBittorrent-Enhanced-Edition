@@ -152,6 +152,8 @@ if (GUI)
         else()
             qt_import_plugins(qbt_app INCLUDE Qt5::QSvgIconPlugin Qt5::QSvgPlugin)
         endif()
+        get_target_property(_qbt_qt_plugins qbt_app QT_PLUGINS)
+        message(STATUS "qbt_app QT_PLUGINS: ${_qbt_qt_plugins}")
     endif()
 endif()
 
