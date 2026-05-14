@@ -2,6 +2,9 @@
 #
 # Included via CMAKE_PROJECT_INCLUDE. Uses cmake_language(DEFER) to inject
 # static Qt plugin support into qbt_app after all subdirectories are processed.
+#
+# This replicates vcpkg's auto-import behavior for static Qt builds, since
+# Conan's CMakeDeps generator does not support Qt's native plugin import mechanism.
 
 if(CMAKE_VERSION VERSION_LESS "3.19")
     message(FATAL_ERROR "StaticQtPlugins.cmake requires CMake 3.19+ for cmake_language(DEFER)")
@@ -18,7 +21,7 @@ function(_qbt_setup_static_qt_plugins)
     # Conan CMakeDeps creates non-GLOBAL IMPORTED targets, so they are only
     # visible in the subdirectory scope where find_package() was called.
     # Re-run find_package here to make the targets visible in this scope.
-    find_package(Qt5 COMPONENTS Core Gui Svg QUIET)
+    find_package(Qt5 COMPONENTS Core Gui Svg Sql QUIET)
 
     if(NOT TARGET Qt5::Core)
         message(STATUS "StaticQtPlugins: Qt5::Core target not found after re-find, skipping")
@@ -32,17 +35,18 @@ function(_qbt_setup_static_qt_plugins)
         return()
     endif()
 
-    message(STATUS "StaticQtPlugins: Static Qt detected - importing platform plugins for qbt_app")
+    message(STATUS "StaticQtPlugins: Static Qt detected - importing plugins for qbt_app")
 
     # Add the plugin import source file
     target_sources(qbt_app PRIVATE "${CMAKE_SOURCE_DIR}/cmake/static_qt_plugins.cpp")
 
-    # Link the platform integration plugin
+    # --- Link all plugin targets (matching vcpkg defaults) ---
+
+    # Platform plugin
     if(TARGET Qt5::QWindowsIntegrationPlugin)
         target_link_libraries(qbt_app PRIVATE Qt5::QWindowsIntegrationPlugin)
-        message(STATUS "StaticQtPlugins: Linked Qt5::QWindowsIntegrationPlugin target")
+        message(STATUS "StaticQtPlugins: Linked Qt5::QWindowsIntegrationPlugin")
     else()
-        # Fallback: search for qwindows.lib in Conan package paths
         foreach(_prefix IN LISTS CMAKE_PREFIX_PATH)
             list(APPEND _hints
                 "${_prefix}/plugins/platforms"
@@ -58,20 +62,30 @@ function(_qbt_setup_static_qt_plugins)
         endif()
     endif()
 
-    # Link image format plugins
-    if(TARGET Qt5::QICOPlugin)
-        target_link_libraries(qbt_app PRIVATE Qt5::QICOPlugin)
-        message(STATUS "StaticQtPlugins: Linked Qt5::QICOPlugin target")
+    # Style plugin
+    if(TARGET Qt5::QWindowsVistaStylePlugin)
+        target_link_libraries(qbt_app PRIVATE Qt5::QWindowsVistaStylePlugin)
+        message(STATUS "StaticQtPlugins: Linked Qt5::QWindowsVistaStylePlugin")
     endif()
 
-    # Link SVG plugins for icon rendering
+    # Icon engine plugin
     if(TARGET Qt5::QSvgIconPlugin)
         target_link_libraries(qbt_app PRIVATE Qt5::QSvgIconPlugin)
-        message(STATUS "StaticQtPlugins: Linked Qt5::QSvgIconPlugin target")
+        message(STATUS "StaticQtPlugins: Linked Qt5::QSvgIconPlugin")
     endif()
-    if(TARGET Qt5::QSvgPlugin)
-        target_link_libraries(qbt_app PRIVATE Qt5::QSvgPlugin)
-        message(STATUS "StaticQtPlugins: Linked Qt5::QSvgPlugin target")
+
+    # Image format plugins
+    foreach(_plugin QSvgPlugin QICOPlugin QGifPlugin QJpegPlugin)
+        if(TARGET Qt5::${_plugin})
+            target_link_libraries(qbt_app PRIVATE Qt5::${_plugin})
+            message(STATUS "StaticQtPlugins: Linked Qt5::${_plugin}")
+        endif()
+    endforeach()
+
+    # SQL driver plugin
+    if(TARGET Qt5::QSQLiteDriverPlugin)
+        target_link_libraries(qbt_app PRIVATE Qt5::QSQLiteDriverPlugin)
+        message(STATUS "StaticQtPlugins: Linked Qt5::QSQLiteDriverPlugin")
     endif()
 
     # Windows system libraries required by QWindowsIntegrationPlugin
