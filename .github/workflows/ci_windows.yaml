@@ -3,25 +3,8 @@ on: [pull_request, push]
 
 jobs:
   ci:
-    name: Build (${{ matrix.arch }})
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: x64
-            conan_profile: windows-x64-release
-            conan_build_profile: windows-x64-release
-            runner: windows-2022
-            vcvars: vcvars64.bat
-          - arch: arm64
-            conan_profile: windows-arm64-release
-            conan_build_profile: windows-arm64-release
-            runner: windows-11-arm
-            vcvars: vcvarsarm64.bat
-
-    env:
-      LIBTORRENT_VERSION: "1.2.20"
+    name: Build (x64)
+    runs-on: windows-2022
 
     steps:
       - name: Checkout repository
@@ -30,60 +13,31 @@ jobs:
       - name: Install build tools
         run: |
           choco install ninja
-          pip install conan
+          Invoke-Expression (Invoke-WebRequest 'https://xmake.io/psget.text' -UseBasicParsing).Content
+          xmake --version
+          xrepo --version
 
-      - name: Detect Conan profile
-        run: conan profile detect --force
-
-      - name: Cache Conan packages
+      - name: Cache xrepo packages
         uses: actions/cache@v4
         with:
-          path: ~/.conan2
-          key: conan-${{ matrix.arch }}-${{ hashFiles('conanfile.txt', 'conan/profiles/*') }}
+          path: ~/.xmake
+          key: xrepo-windows-x64-${{ hashFiles('cmake/XrepoDependencies.cmake', 'cmake/xrepo-packages/xmake.lua') }}
           restore-keys: |
-            conan-${{ matrix.arch }}-
-
-      - name: Install Conan dependencies
-        shell: cmd
-        run: |
-          call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\${{ matrix.vcvars }}"
-          conan install . ^
-            --profile:host=conan/profiles/${{ matrix.conan_profile }} ^
-            --profile:build=conan/profiles/${{ matrix.conan_build_profile }} ^
-            --output-folder=build ^
-            --build=missing
-
-      - name: Build libtorrent
-        shell: cmd
-        run: |
-          call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\${{ matrix.vcvars }}"
-          git clone --depth 1 --branch v%LIBTORRENT_VERSION% https://github.com/arvidn/libtorrent.git libtorrent-src
-          cmake -S libtorrent-src -B libtorrent-build -G "Ninja" ^
-            -DCMAKE_TOOLCHAIN_FILE=%CD%/build/conan_toolchain.cmake ^
-            -DCMAKE_BUILD_TYPE=RelWithDebInfo ^
-            -DCMAKE_CXX_STANDARD=17 ^
-            -DCMAKE_INSTALL_PREFIX=%CD%/libtorrent-install ^
-            -DBUILD_SHARED_LIBS=OFF ^
-            -Dstatic_runtime=ON ^
-            -Ddeprecated-functions=ON ^
-            -Diconv=OFF
-          cmake --build libtorrent-build
-          cmake --install libtorrent-build
+            xrepo-windows-x64-
 
       - name: Build qBittorrent
         shell: cmd
         run: |
-          call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\${{ matrix.vcvars }}"
+          call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
           cmake ^
             -B build ^
             -G "Ninja" ^
-            -DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake ^
             -DCMAKE_BUILD_TYPE=RelWithDebInfo ^
             -DCMAKE_EXE_LINKER_FLAGS=Mpr.lib ^
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON ^
-            -DCMAKE_PREFIX_PATH=%CD%/libtorrent-install ^
             -DCMAKE_PROJECT_INCLUDE=%CD%/cmake/StaticQtPlugins.cmake ^
             -DMSVC_RUNTIME_DYNAMIC=OFF ^
+            -DUSE_XREPO=ON ^
             -DVERBOSE_CONFIGURE=ON ^
             --graphviz=build/target_graph.dot
           cmake --build build
@@ -91,7 +45,7 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v6
         with:
-          name: qBittorrent-CI_Windows-${{ matrix.arch }}
+          name: qBittorrent-CI_Windows-x64
           path: |
             build/compile_commands.json
             build/qbittorrent.exe

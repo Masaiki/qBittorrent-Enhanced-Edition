@@ -51,6 +51,12 @@ elseif (MSVC)
 endif()
 
 include(GNUInstallDirs)
+
+option(USE_XREPO "Use xrepo to download, build and install dependencies" OFF)
+if (USE_XREPO)
+    include(cmake/XrepoDependencies.cmake)
+endif()
+
 add_subdirectory(src)
 add_subdirectory(dist)
 
