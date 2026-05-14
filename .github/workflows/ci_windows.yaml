@@ -65,7 +65,8 @@ jobs:
             -DCMAKE_INSTALL_PREFIX=%CD%/libtorrent-install ^
             -DBUILD_SHARED_LIBS=OFF ^
             -Dstatic_runtime=ON ^
-            -Ddeprecated-functions=ON
+            -Ddeprecated-functions=ON ^
+            -Diconv=OFF
           cmake --build libtorrent-build
           cmake --install libtorrent-build
 
