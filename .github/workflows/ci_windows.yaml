@@ -41,6 +41,7 @@ jobs:
           }
           git -C "$env:VCPKG_INSTALLATION_ROOT" fetch --depth=1 origin $env:VCPKG_COMMIT
           git -C "$env:VCPKG_INSTALLATION_ROOT" checkout --force $env:VCPKG_COMMIT
+          New-Item -ItemType Directory -Force -Path "$env:VCPKG_DEFAULT_BINARY_CACHE" | Out-Null
           & "$env:VCPKG_INSTALLATION_ROOT/bootstrap-vcpkg.bat" -disableMetrics
           "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
           "VCPKG_FEATURE_FLAGS=manifests,versions" >> $env:GITHUB_ENV
