@@ -1,427 +1,277 @@
-#!/bin/bash -e
-
-# This script is for static cross compiling
-# Please run this script in docker image: abcfy2/muslcc-toolchain-ubuntu:${CROSS_HOST}
-# E.g: docker run --rm -v `git rev-parse --show-toplevel`:/build abcfy2/muslcc-toolchain-ubuntu:arm-linux-musleabi /build/.github/workflows/cross_build.sh
-# If you need keep store build cache in docker volume, just like:
-#   $ docker volume create qbee-nox-cache
-#   $ docker run --rm -v `git rev-parse --show-toplevel`:/build -v qbee-nox-cache:/var/cache/apt -v qbee-nox-cache:/usr/src abcfy2/muslcc-toolchain-ubuntu:arm-linux-musleabi /build/.github/workflows/cross_build.sh
+#!/bin/sh -e
+# This scrip is for cross compilations
+# Please run this scrip in docker image: abcfy2/muslcc-toolchain-ubuntu:${CROSS_HOST}
+# E.g: docker run -e CROSS_HOST=arm-linux-musleabi -e OPENSSL_COMPILER=linux-armv4 -e QT_DEVICE=linux-arm-generic-g++ --rm -v `git rev-parse --show-toplevel`:/build abcfy2/muslcc-toolchain-ubuntu:arm-linux-musleabi /build/.github/workflows/cross_build.sh
 # Artifacts will copy to the same directory.
 
-set -o pipefail
+# value from: https://musl.cc/ (without -cross or -native)
+export CROSS_HOST="${CROSS_HOST:-arm-linux-musleabi}"
+export TOOLCHAIN_TARGET="${TOOLCHAIN_TARGET:-${CROSS_HOST}}"
+export TOOLCHAIN_PREFIX="${TOOLCHAIN_PREFIX:-/cross_root/${TOOLCHAIN_TARGET}}"
+# value from openssl source: ./Configure LIST
+export OPENSSL_COMPILER="${OPENSSL_COMPILER:-linux-armv4}"
+# value from https://github.com/qt/qtbase/tree/dev/mkspecs/
+export QT_XPLATFORM="${QT_XPLATFORM}"
+# value from https://github.com/qt/qtbase/tree/dev/mkspecs/devices/
+export QT_DEVICE="${QT_DEVICE}"
+export ZLIB_VERSION="${ZLIB_VERSION:-1.3.1}"
+export OPENSSL_VERSION="${OPENSSL_VERSION:-1.1.1w}"
+export BOOST_VERSION="${BOOST_VERSION:-1.86.0}"
+export QT_MAJOR_VER="${QT_MAJOR_VER:-5.15}"
+export QT_VER="${QT_VER:-5.15.18}"
+export LIBICONV_VERSION="${LIBICONV_VERSION:-1.17}"
+export LIBTORRENT_BRANCH="v1.2.20"
+export CROSS_ROOT="${CROSS_ROOT:-$(dirname "${TOOLCHAIN_PREFIX}")}"
+export MUSL_TOOLCHAIN_BASE_URLS="${MUSL_TOOLCHAIN_BASE_URLS:-https://more.musl.cc/x86_64-linux-musl https://musl.cc}"
 
-# match qt version prefix. E.g 5 --> 5.15.2, 5.12 --> 5.12.10
-export QT_VER_PREFIX="6"
-export LIBTORRENT_BRANCH="RC_1_2"
+download_file() {
+  output_path="${1}"
+  shift
 
-# Ubuntu mirror for local building
-if [ x"${USE_CHINA_MIRROR}" = x1 ]; then
-  source /etc/os-release
-  if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
-    cat >/etc/apt/sources.list.d/ubuntu.sources <<EOF
-Types: deb
-URIs: http://repo.huaweicloud.com/ubuntu/
-Suites: ${UBUNTU_CODENAME} ${UBUNTU_CODENAME}-updates ${UBUNTU_CODENAME}-backports ${UBUNTU_CODENAME}-security
-Components: main universe restricted multiverse
-Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
-EOF
+  tmp_path="${output_path}.tmp"
+  rm -f "${tmp_path}"
+
+  for url in "$@"; do
+    echo "Downloading ${url}"
+    if wget -T 60 -t 3 -O "${tmp_path}" "${url}"; then
+      mv -f "${tmp_path}" "${output_path}"
+      return 0
+    fi
+    rm -f "${tmp_path}"
+  done
+
+  echo "Failed to download ${output_path}" >&2
+  return 1
+}
+
+install_packages() {
+  if command -v apk >/dev/null 2>&1; then
+    apk add "$@"
+  elif command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y --no-install-suggests --no-install-recommends "$@"
   else
-    cat >/etc/apt/sources.list <<EOF
-deb http://repo.huaweicloud.com/ubuntu/ ${UBUNTU_CODENAME} main restricted universe multiverse
-deb http://repo.huaweicloud.com/ubuntu/ ${UBUNTU_CODENAME}-updates main restricted universe multiverse
-deb http://repo.huaweicloud.com/ubuntu/ ${UBUNTU_CODENAME}-backports main restricted universe multiverse
-deb http://repo.huaweicloud.com/ubuntu/ ${UBUNTU_CODENAME}-security main restricted universe multiverse
-EOF
+    echo "No supported package manager found" >&2
+    return 1
   fi
-  export PIP_INDEX_URL="https://repo.huaweicloud.com/repository/pypi/simple"
+}
+
+if command -v apk >/dev/null 2>&1; then
+  install_packages gcc g++ make file perl autoconf automake libtool tar jq pkgconfig wget linux-headers zip xz bzip2
+else
+  install_packages gcc g++ make file perl autoconf automake libtool tar jq pkg-config wget linux-libc-dev zip xz-utils bzip2 ca-certificates
 fi
-
-export DEBIAN_FRONTEND=noninteractive
-
-# keep debs in container for store cache in docker volume
-rm -f /etc/apt/apt.conf.d/*
-echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' >/etc/apt/apt.conf.d/01keep-debs
-echo -e 'Acquire::https::Verify-Peer "false";\nAcquire::https::Verify-Host "false";' >/etc/apt/apt.conf.d/99-trust-https
-
-apt update
-apt install -y \
-  jq \
-  curl \
-  git \
-  make \
-  g++ \
-  unzip \
-  zip \
-  pkg-config \
-  pipx \
-  python3-pip
-
-# use zlib-ng instead of zlib by default
-USE_ZLIB_NG=${USE_ZLIB_NG:-1}
-
-# OPENSSL_COMPILER value is from openssl source: ./Configure LIST
-# QT_DEVICE and QT_DEVICE_OPTIONS value are from https://github.com/qt/qtbase/tree/dev/mkspecs/devices/
-case "${CROSS_HOST}" in
-arm-linux*)
-  export OPENSSL_COMPILER=linux-armv4
-  ;;
-aarch64-linux*)
-  export OPENSSL_COMPILER=linux-aarch64
-  ;;
-mips-linux* | mipsel-linux*)
-  export OPENSSL_COMPILER=linux-mips32
-  ;;
-mips64-linux* | mips64el-linux*)
-  export OPENSSL_COMPILER=linux64-mips64
-  ;;
-x86_64-linux*)
-  export OPENSSL_COMPILER=linux-x86_64
-  ;;
-x86_64-*-mingw*)
-  export OPENSSL_COMPILER=mingw64
-  ;;
-i686-*-mingw*)
-  export OPENSSL_COMPILER=mingw
-  ;;
-*)
-  export OPENSSL_COMPILER=gcc
-  ;;
-esac
-
-# strip all compiled files by default
-export CFLAGS='-s'
-export CXXFLAGS='-s'
 
 TARGET_ARCH="${CROSS_HOST%%-*}"
 TARGET_HOST="${CROSS_HOST#*-}"
 case "${TARGET_HOST}" in
 *"mingw"*)
-  TARGET_HOST=Windows
-  apt install -y wine
+  TARGET_HOST=win
+  if command -v apk >/dev/null 2>&1; then
+    install_packages wine
+  else
+    install_packages wine64
+  fi
   export WINEPREFIX=/tmp/
-  RUNNER_CHECKER="wine"
+  RUNNER_CHECKER="wine64"
   ;;
 *)
-  TARGET_HOST=Linux
-  apt install -y "qemu-user-static"
-  if [ x"${TARGET_ARCH}" = xi686 ]; then
-    RUNNER_CHECKER="qemu-i386-static"
+  TARGET_HOST=linux
+  if command -v apk >/dev/null 2>&1; then
+    install_packages "qemu-${TARGET_ARCH}"
   else
-    RUNNER_CHECKER="qemu-${TARGET_ARCH}-static"
+    install_packages qemu-user
   fi
+  RUNNER_CHECKER="qemu-${TARGET_ARCH}"
   ;;
 esac
 
-export PKG_CONFIG_PATH="${CROSS_PREFIX}/opt/qt/lib/pkgconfig:${CROSS_PREFIX}/lib/pkgconfig:${CROSS_PREFIX}/share/pkgconfig:${PKG_CONFIG_PATH}"
+export PATH="${CROSS_ROOT}/bin:${PATH}"
+export CROSS_PREFIX="${TOOLCHAIN_PREFIX}"
+export PKG_CONFIG_PATH="${CROSS_PREFIX}/opt/qt/lib/pkgconfig:${CROSS_PREFIX}/lib/pkgconfig:${PKG_CONFIG_PATH}"
 SELF_DIR="$(dirname "$(readlink -f "${0}")")"
 
-mkdir -p "/usr/src"
+mkdir -p "${CROSS_ROOT}" \
+  /usr/src/zlib \
+  /usr/src/openssl \
+  /usr/src/boost \
+  /usr/src/libiconv \
+  /usr/src/libtorrent \
+  /usr/src/qtbase \
+  /usr/src/qttools
 
-retry() {
-  # max retry 5 times
-  try=5
-  # sleep 1 min every retry
-  sleep_time=60
-  for i in $(seq ${try}); do
-    echo "executing with retry: $@" >&2
-    if eval "$@"; then
-      return 0
-    else
-      echo "execute '$@' failed, tries: ${i}" >&2
-      sleep ${sleep_time}
-    fi
-  done
-  echo "execute '$@' failed" >&2
-  return 1
-}
-
-# This function is used to check version less than or equal to another version
-verlte() {
-  printf '%s\n' "$1" "$2" | sort -C -V
-}
-
-prepare_cmake() {
-  if ! which cmake &>/dev/null; then
-    cmake_latest_ver="$(retry curl -ksSL --compressed https://cmake.org/download/ \| grep "'Latest Release'" \| sed -r "'s/.*Latest Release\s*\((.+)\).*/\1/'" \| head -1)"
-    cmake_binary_url="https://github.com/Kitware/CMake/releases/download/v${cmake_latest_ver}/cmake-${cmake_latest_ver}-linux-x86_64.tar.gz"
-    cmake_sha256_url="https://github.com/Kitware/CMake/releases/download/v${cmake_latest_ver}/cmake-${cmake_latest_ver}-SHA-256.txt"
-    if [ x"${USE_CHINA_MIRROR}" = x1 ]; then
-      cmake_binary_url="https://ghproxy.org/${cmake_binary_url}"
-      cmake_sha256_url="https://ghproxy.org/${cmake_sha256_url}"
-    fi
-    if [ -f "/usr/src/cmake-${cmake_latest_ver}-linux-x86_64.tar.gz" ]; then
-      cd /usr/src
-      if ! retry curl -ksSL --compressed "${cmake_sha256_url}" \| grep "cmake-${cmake_latest_ver}-linux-x86_64.tar.gz" \| sha256sum -c; then
-        rm -f "/usr/src/cmake-${cmake_latest_ver}-linux-x86_64.tar.gz"
-      fi
-    fi
-    if [ ! -f "/usr/src/cmake-${cmake_latest_ver}-linux-x86_64.tar.gz" ]; then
-      retry curl -kLo "/usr/src/cmake-${cmake_latest_ver}-linux-x86_64.tar.gz" "${cmake_binary_url}"
-    fi
-    tar -zxf "/usr/src/cmake-${cmake_latest_ver}-linux-x86_64.tar.gz" -C /usr/local --strip-components 1
+# toolchain
+if command -v "${TOOLCHAIN_TARGET}-gcc" >/dev/null 2>&1; then
+  echo "Using preinstalled ${TOOLCHAIN_TARGET} toolchain"
+else
+  if [ ! -f "${SELF_DIR}/${CROSS_HOST}-cross.tgz" ]; then
+    toolchain_urls=""
+    for base_url in ${MUSL_TOOLCHAIN_BASE_URLS}; do
+      toolchain_urls="${toolchain_urls} ${base_url}/${CROSS_HOST}-cross.tgz"
+    done
+    # shellcheck disable=SC2086
+    download_file "${SELF_DIR}/${CROSS_HOST}-cross.tgz" ${toolchain_urls}
   fi
-  cmake --version
-}
-
-prepare_ninja() {
-  if ! which ninja &>/dev/null; then
-    ninja_ver="$(retry curl -ksSL --compressed https://ninja-build.org/ \| grep "'The last Ninja release is'" \| sed -r "'s@.*<b>(.+)</b>.*@\1@'" \| head -1)"
-    ninja_binary_url="https://github.com/ninja-build/ninja/releases/download/${ninja_ver}/ninja-linux.zip"
-    if [ x"${USE_CHINA_MIRROR}" = x1 ]; then
-      ninja_binary_url="https://ghproxy.org/${ninja_binary_url}"
-    fi
-    if [ ! -f "/usr/src/ninja-${ninja_ver}-linux.zip.download_ok" ]; then
-      rm -f "/usr/src/ninja-${ninja_ver}-linux.zip"
-      retry curl -kLC- -o "/usr/src/ninja-${ninja_ver}-linux.zip" "${ninja_binary_url}"
-      touch "/usr/src/ninja-${ninja_ver}-linux.zip.download_ok"
-    fi
-    unzip -d /usr/local/bin "/usr/src/ninja-${ninja_ver}-linux.zip"
+  tar -zxf "${SELF_DIR}/${CROSS_HOST}-cross.tgz" --transform='s|^\./||S' --strip-components=1 -C "${CROSS_ROOT}"
+  export TOOLCHAIN_TARGET="${CROSS_HOST}"
+  export TOOLCHAIN_PREFIX="${CROSS_ROOT}/${CROSS_HOST}"
+  export CROSS_PREFIX="${TOOLCHAIN_PREFIX}"
+  export PATH="${CROSS_ROOT}/bin:${PATH}"
+fi
+# mingw does not contains posix thread support: https://github.com/meganz/mingw-std-threads
+if [ "${TARGET_HOST}" = 'win' ]; then
+  if [ ! -f "${SELF_DIR}/mingw-std-threads.tar.gz" ]; then
+    wget -c -O "${SELF_DIR}/mingw-std-threads.tar.gz" "https://github.com/meganz/mingw-std-threads/archive/master.tar.gz"
   fi
-  echo "Ninja version $(ninja --version)"
-}
+  mkdir -p /usr/src/mingw-std-threads/
+  tar -zxf "${SELF_DIR}/mingw-std-threads.tar.gz" --strip-components=1 -C "/usr/src/mingw-std-threads/"
+  cp -fv /usr/src/mingw-std-threads/*.h "${CROSS_PREFIX}/include"
+fi
 
-prepare_zlib() {
-  if [ x"${USE_ZLIB_NG}" = x"1" ]; then
-    zlib_ng_latest_tag="$(retry curl -ksSL --compressed https://api.github.com/repos/zlib-ng/zlib-ng/releases \| jq -r "'.[0].tag_name'")"
-    zlib_ng_latest_url="https://github.com/zlib-ng/zlib-ng/archive/refs/tags/${zlib_ng_latest_tag}.tar.gz"
-    echo "zlib-ng version ${zlib_ng_latest_tag}"
-    if [ x"${USE_CHINA_MIRROR}" = x1 ]; then
-      zlib_ng_latest_url="https://ghproxy.org/${zlib_ng_latest_url}"
-    fi
-    if [ ! -f "/usr/src/zlib-ng-${zlib_ng_latest_tag}/.unpack_ok" ]; then
-      mkdir -p "/usr/src/zlib-ng-${zlib_ng_latest_tag}/"
-      retry curl -ksSL "${zlib_ng_latest_url}" \| tar -zxf - --strip-components=1 -C "/usr/src/zlib-ng-${zlib_ng_latest_tag}/"
-      touch "/usr/src/zlib-ng-${zlib_ng_latest_tag}/.unpack_ok"
-    fi
-    cd "/usr/src/zlib-ng-${zlib_ng_latest_tag}/"
-    rm -fr build
-    cmake -B build \
-      -G Ninja \
-      -DBUILD_SHARED_LIBS=OFF \
-      -DZLIB_COMPAT=ON \
-      -DCMAKE_SYSTEM_NAME="${TARGET_HOST}" \
-      -DCMAKE_INSTALL_PREFIX="${CROSS_PREFIX}" \
-      -DCMAKE_C_COMPILER="${CROSS_HOST}-gcc" \
-      -DCMAKE_CXX_COMPILER="${CROSS_HOST}-g++" \
-      -DCMAKE_SYSTEM_PROCESSOR="${TARGET_ARCH}" \
-      -DWITH_GTEST=OFF
-    cmake --build build
-    cmake --install build
-    # Fix mingw build sharedlibdir lost issue
-    sed -i 's@^sharedlibdir=.*@sharedlibdir=${libdir}@' "${CROSS_PREFIX}/lib/pkgconfig/zlib.pc"
-  else
-    zlib_ver="$(retry curl -ksSL --compressed https://zlib.net/ \| grep -i "'<FONT.*FONT>'" \| sed -r "'s/.*zlib\s*([^<]+).*/\1/'" \| head -1)"
-    echo "zlib version ${zlib_ver}"
-    if [ ! -f "/usr/src/zlib-${zlib_ver}/.unpack_ok" ]; then
-      mkdir -p "/usr/src/zlib-${zlib_ver}"
-      zlib_latest_url="https://sourceforge.net/projects/libpng/files/zlib/${zlib_ver}/zlib-${zlib_ver}.tar.xz/download"
-      retry curl -kL "${zlib_latest_url}" \| tar -Jxf - --strip-components=1 -C "/usr/src/zlib-${zlib_ver}"
-      touch "/usr/src/zlib-${zlib_ver}/.unpack_ok"
-    fi
-    cd "/usr/src/zlib-${zlib_ver}"
-
-    if [ x"${TARGET_HOST}" = x"Windows" ]; then
-      make -f win32/Makefile.gcc BINARY_PATH="${CROSS_PREFIX}/bin" INCLUDE_PATH="${CROSS_PREFIX}/include" LIBRARY_PATH="${CROSS_PREFIX}/lib" SHARED_MODE=0 PREFIX="${CROSS_HOST}-" -j$(nproc) install
-    else
-      CHOST="${CROSS_HOST}" ./configure --prefix="${CROSS_PREFIX}" --static
-      make -j$(nproc)
-      make install
-    fi
-  fi
-}
-
-prepare_ssl() {
-  openssl_filename="$(retry curl -ksSL --compressed https://openssl-library.org/source/ \| grep -o "'>openssl-3\(\.[0-9]*\)*tar.gz<'" \| grep -o "'[^>]*.tar.gz'" \| sort -nr \| head -1)"
-  openssl_ver="$(echo "${openssl_filename}" | sed -r 's/openssl-(.+)\.tar\.gz/\1/')"
-  echo "OpenSSL version ${openssl_ver}"
-  if [ ! -f "/usr/src/openssl-${openssl_ver}/.unpack_ok" ]; then
-    openssl_download_url="https://github.com/openssl/openssl/releases/download/openssl-${openssl_ver}/${openssl_filename}"
-    if [ x"${USE_CHINA_MIRROR}" = x1 ]; then
-      openssl_download_url="https://ghproxy.org/${openssl_download_url}"
-    fi
-    mkdir -p "/usr/src/openssl-${openssl_ver}/"
-    retry curl -kL "${openssl_download_url}" \| tar -zxf - --strip-components=1 -C "/usr/src/openssl-${openssl_ver}/"
-    touch "/usr/src/openssl-${openssl_ver}/.unpack_ok"
-  fi
-  cd "/usr/src/openssl-${openssl_ver}/"
-  ./Configure -static --openssldir=/etc/ssl --cross-compile-prefix="${CROSS_HOST}-" --prefix="${CROSS_PREFIX}" "${OPENSSL_COMPILER}"
+# zlib
+if [ ! -f "${SELF_DIR}/zlib.tar.gz" ]; then
+  wget -c -O "${SELF_DIR}/zlib.tar.gz" "https://github.com/madler/zlib/archive/refs/tags/v${ZLIB_VERSION}.tar.gz"
+fi
+tar -zxf "${SELF_DIR}/zlib.tar.gz" --strip-components=1 -C /usr/src/zlib
+cd /usr/src/zlib
+if [ "${TARGET_HOST}" = win ]; then
+  make -f win32/Makefile.gcc BINARY_PATH="${CROSS_PREFIX}/bin" INCLUDE_PATH="${CROSS_PREFIX}/include" LIBRARY_PATH="${CROSS_PREFIX}/lib" SHARED_MODE=0 PREFIX="${TOOLCHAIN_TARGET}-" -j$(nproc) install
+else
+  CHOST="${TOOLCHAIN_TARGET}" ./configure --prefix="${CROSS_PREFIX}" --static
   make -j$(nproc)
-  make install_sw
-  if [ -f "${CROSS_PREFIX}/lib64/libssl.a" ]; then
-    cp -rfv "${CROSS_PREFIX}"/lib64/. "${CROSS_PREFIX}/lib"
-  fi
-  if [ -f "${CROSS_PREFIX}/lib32/libssl.a" ]; then
-    cp -rfv "${CROSS_PREFIX}"/lib32/. "${CROSS_PREFIX}/lib"
-  fi
-}
+  make install
+fi
 
-prepare_boost() {
-  boost_ver="$(retry curl -ksSL --compressed https://www.boost.org/users/download/ \| grep "'>Version\s*'" \| sed -r "'s/.*Version\s*([^<]+).*/\1/'" \| head -1)"
-  echo "Boost version ${boost_ver}"
-  if [ ! -f "/usr/src/boost-${boost_ver}/.unpack_ok" ]; then
-    boost_latest_url="https://sourceforge.net/projects/boost/files/boost/${boost_ver}/boost_${boost_ver//./_}.tar.bz2/download"
-    mkdir -p "/usr/src/boost-${boost_ver}/"
-    retry curl -kL "${boost_latest_url}" \| tar -jxf - -C "/usr/src/boost-${boost_ver}/" --strip-components 1
-    touch "/usr/src/boost-${boost_ver}/.unpack_ok"
-  fi
-  cd "/usr/src/boost-${boost_ver}/"
-  echo "using gcc : cross : ${CROSS_HOST}-g++ ;" >~/user-config.jam
-  if [ ! -f ./b2 ]; then
-    ./bootstrap.sh
-  fi
-  ./b2 -d0 -q install --prefix="${CROSS_PREFIX}" --with-system toolset=gcc-cross variant=release link=static runtime-link=static
-  cd "/usr/src/boost-${boost_ver}/tools/build"
-  if [ ! -f ./b2 ]; then
-    ./bootstrap.sh
-  fi
-  ./b2 -d0 -q install --prefix="${CROSS_ROOT}"
-}
+# openssl
+if [ ! -f "${SELF_DIR}/openssl.tar.gz" ]; then
+  openssl_tag="OpenSSL_$(echo "${OPENSSL_VERSION}" | tr . _)"
+  wget -c -O "${SELF_DIR}/openssl.tar.gz" "https://github.com/openssl/openssl/releases/download/${openssl_tag}/openssl-${OPENSSL_VERSION}.tar.gz"
+fi
+tar -zxf "${SELF_DIR}/openssl.tar.gz" --strip-components=1 -C /usr/src/openssl
+cd /usr/src/openssl
+./Configure -static --cross-compile-prefix="${TOOLCHAIN_TARGET}-" --prefix="${CROSS_PREFIX}" "${OPENSSL_COMPILER}"
+make depend
+make -j$(nproc)
+make install_sw
 
-prepare_qt() {
-  qt_major_ver="$(retry curl -ksSL --compressed https://download.qt.io/official_releases/qt/ \| sed -nr "'s@.*href=\"([0-9]+(\.[0-9]+)*)/\".*@\1@p'" \| grep \"^${QT_VER_PREFIX}\" \| head -1)"
-  qt_ver="$(retry curl -ksSL --compressed https://download.qt.io/official_releases/qt/${qt_major_ver}/ \| sed -nr "'s@.*href=\"([0-9]+(\.[0-9]+)*)/\".*@\1@p'" \| grep \"^${QT_VER_PREFIX}\" \| head -1)"
-  echo "Using qt version: ${qt_ver}"
-  mkdir -p "/usr/src/qtbase-${qt_ver}" "/usr/src/qttools-${qt_ver}"
-  if [ ! -f "/usr/src/qt-host/${qt_ver}/gcc_64/bin/qt.conf" ]; then
-    pipx install aqtinstall
-    retry "${HOME}/.local/bin/aqt" install-qt -O /usr/src/qt-host linux desktop "${qt_ver}" --archives qtbase qttools icu
-  fi
-  if [ ! -f "/usr/src/qtbase-${qt_ver}/.unpack_ok" ]; then
-    qtbase_url="https://download.qt.io/official_releases/qt/${qt_major_ver}/${qt_ver}/submodules/qtbase-everywhere-src-${qt_ver}.tar.xz"
-    retry curl -kL "${qtbase_url}" \| tar Jxf - -C "/usr/src/qtbase-${qt_ver}" --strip-components 1
-    touch "/usr/src/qtbase-${qt_ver}/.unpack_ok"
-  fi
-  cd "/usr/src/qtbase-${qt_ver}"
-  rm -fr CMakeCache.txt CMakeFiles
-  if [ x"${TARGET_HOST}" = x"Windows" ]; then
-    QT_BASE_EXTRA_CONF='-xplatform win32-g++'
-  fi
+# boost
+if [ ! -f "${SELF_DIR}/boost.tar.bz2" ]; then
+  boost_filename="$(echo "boost_${BOOST_VERSION}" | tr . _)"
+  wget -c -O "${SELF_DIR}/boost.tar.bz2" "https://archives.boost.io/release/${BOOST_VERSION}/source/${boost_filename}.tar.bz2"
+fi
+tar -jxf "${SELF_DIR}/boost.tar.bz2" --strip-components=1 -C /usr/src/boost
+cd /usr/src/boost
+./bootstrap.sh
+printf 'using gcc : cross : %s-g++ ;\n' "${TOOLCHAIN_TARGET}" > user-config.jam
+./b2 install --user-config=user-config.jam --prefix="${CROSS_PREFIX}" --with-system toolset=gcc-cross variant=release link=static runtime-link=static
 
-  ./configure \
-    -prefix "${CROSS_PREFIX}/opt/qt/" \
-    -qt-host-path "/usr/src/qt-host/${qt_ver}/gcc_64/" \
-    -release \
-    -static \
-    -c++std c++17 \
-    -optimize-size \
-    -openssl \
-    -openssl-linked \
-    -no-gui \
-    -no-dbus \
-    -no-widgets \
-    -no-feature-testlib \
-    -no-feature-animation \
-    -feature-optimize_full \
-    -nomake examples \
-    -nomake tests \
-    ${QT_BASE_EXTRA_CONF} \
-    -device-option "CROSS_COMPILE=${CROSS_HOST}-" \
-    -- \
-    -DCMAKE_SYSTEM_NAME="${TARGET_HOST}" \
-    -DCMAKE_SYSTEM_PROCESSOR="${TARGET_ARCH}" \
-    -DCMAKE_C_COMPILER="${CROSS_HOST}-gcc" \
-    -DCMAKE_SYSROOT="${CROSS_PREFIX}" \
-    -DCMAKE_CXX_COMPILER="${CROSS_HOST}-g++"
-  cmake --build . --parallel
-  cmake --install .
-  export QT_BASE_DIR="${CROSS_PREFIX}/opt/qt"
-  export LD_LIBRARY_PATH="${QT_BASE_DIR}/lib:${LD_LIBRARY_PATH}"
-  export PATH="${QT_BASE_DIR}/bin:${PATH}"
-}
+# qt
+echo "Using qt version: ${QT_VER}"
+qtbase_url="https://download.qt.io/archive/qt/${QT_MAJOR_VER}/${QT_VER}/submodules/qtbase-everywhere-opensource-src-${QT_VER}.tar.xz"
+qtbase_filename="qtbase-everywhere-opensource-src-${QT_VER}.tar.xz"
+qttools_url="https://download.qt.io/archive/qt/${QT_MAJOR_VER}/${QT_VER}/submodules/qttools-everywhere-opensource-src-${QT_VER}.tar.xz"
+qttools_filename="qttools-everywhere-opensource-src-${QT_VER}.tar.xz"
+if [ ! -f "${SELF_DIR}/${qtbase_filename}" ]; then
+  wget -c -O "${SELF_DIR}/${qtbase_filename}" "${qtbase_url}"
+fi
+if [ ! -f "${SELF_DIR}/${qttools_filename}" ]; then
+  wget -c -O "${SELF_DIR}/${qttools_filename}" "${qttools_url}"
+fi
+tar -Jxf "${SELF_DIR}/${qtbase_filename}" --strip-components=1 -C /usr/src/qtbase
+tar -Jxf "${SELF_DIR}/${qttools_filename}" --strip-components=1 -C /usr/src/qttools
+cd /usr/src/qtbase
+# Remove some options no support by this toolchain
+find -name '*.conf' -print0 | xargs -0 -r sed -i 's/-fno-fat-lto-objects//g'
+find -name '*.conf' -print0 | xargs -0 -r sed -i 's/-fuse-linker-plugin//g'
+find -name '*.conf' -print0 | xargs -0 -r sed -i 's/-mfloat-abi=softfp//g'
 
-prepare_libtorrent() {
-  echo "libtorrent-rasterbar branch: ${LIBTORRENT_BRANCH}"
-  libtorrent_git_url="https://github.com/arvidn/libtorrent.git"
-  if [ x"${USE_CHINA_MIRROR}" = x1 ]; then
-    libtorrent_git_url="https://ghproxy.org/${libtorrent_git_url}"
-  fi
-  if [ ! -d "/usr/src/libtorrent-rasterbar-${LIBTORRENT_BRANCH}/" ]; then
-    retry git clone --depth 1 --recursive --shallow-submodules --branch "${LIBTORRENT_BRANCH}" \
-      "${libtorrent_git_url}" \
-      "/usr/src/libtorrent-rasterbar-${LIBTORRENT_BRANCH}/"
-  fi
-  cd "/usr/src/libtorrent-rasterbar-${LIBTORRENT_BRANCH}/"
-  if ! git pull; then
-    # if pull failed, retry clone the repository.
-    cd /
-    rm -fr "/usr/src/libtorrent-rasterbar-${LIBTORRENT_BRANCH}/"
-    retry git clone --depth 1 --recursive --shallow-submodules --branch "${LIBTORRENT_BRANCH}" \
-      "${libtorrent_git_url}" \
-      "/usr/src/libtorrent-rasterbar-${LIBTORRENT_BRANCH}/"
-    cd "/usr/src/libtorrent-rasterbar-${LIBTORRENT_BRANCH}/"
-  fi
-  rm -fr build/CMakeCache.txt
-  # TODO: solve mingw build
-  if [ x"${TARGET_HOST}" = x"Windows" ]; then
-    find -type f \( -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \) -print0 |
-      xargs -0 -r sed -i 's/Windows\.h/windows.h/g;
-                          s/Shellapi\.h/shellapi.h/g;
-                          s/Shlobj\.h/shlobj.h/g;
-                          s/Ntsecapi\.h/ntsecapi.h/g;
-                          s/#include\s*<condition_variable>/#include "mingw.condition_variable.h"/g;
-                          s/#include\s*<future>/#include "mingw.future.h"/g;
-                          s/#include\s*<invoke>/#include "mingw.invoke.h"/g;
-                          s/#include\s*<mutex>/#include "mingw.mutex.h"/g;
-                          s/#include\s*<shared_mutex>/#include "mingw.shared_mutex.h"/g;
-                          s/#include\s*<thread>/#include "mingw.thread.h"/g'
-  fi
-  cmake \
-    -B build \
-    -G "Ninja" \
-    -DCMAKE_INSTALL_PREFIX="${CROSS_PREFIX}" \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_CXX_STANDARD=17 \
-    -Dstatic_runtime=on \
-    -DBUILD_SHARED_LIBS=off \
-    -DCMAKE_SYSTEM_NAME="${TARGET_HOST}" \
-    -DCMAKE_SYSTEM_PROCESSOR="${TARGET_ARCH}" \
-    -DCMAKE_SYSROOT="${CROSS_PREFIX}" \
-    -DCMAKE_C_COMPILER="${CROSS_HOST}-gcc" \
-    -DCMAKE_CXX_COMPILER="${CROSS_HOST}-g++"
-  cmake --build build
-  cmake --install build
-}
+# fix gcc 11+ missing <limits>
+sed -i '1i #include <limits>' src/corelib/global/qfloat16.h src/corelib/global/qendian.h src/corelib/text/qbytearraymatcher.h
+if [ "${TARGET_HOST}" = 'win' ]; then
+  export OPENSSL_LIBS="-lssl -lcrypto -lcrypt32 -lws2_32"
+  # musl.cc x86_64-w64-mingw32 toolchain not supports thread local
+  sed -i '/define\s*Q_COMPILER_THREAD_LOCAL/d' src/corelib/global/qcompilerdetection.h
+fi
+./configure --prefix=/opt/qt/ -optimize-size -silent --openssl-linked \
+  -static -opensource -confirm-license -release -c++std c++17 -no-opengl \
+  -no-dbus -no-widgets -no-gui -no-compile-examples -ltcg -make libs -no-pch \
+  -nomake tests -nomake examples -no-xcb -no-feature-testlib \
+  -hostprefix "${CROSS_ROOT}" ${QT_XPLATFORM:+-xplatform "${QT_XPLATFORM}"} \
+  ${QT_DEVICE:+-device "${QT_DEVICE}"} -device-option CROSS_COMPILE="${TOOLCHAIN_TARGET}-" \
+  -sysroot "${CROSS_PREFIX}"
+make -j$(nproc)
+make install
+cd /usr/src/qttools
+qmake -set prefix "${CROSS_ROOT}"
+qmake
+# Remove some options no support by this toolchain
+find -name '*.conf' -print0 | xargs -0 -r sed -i 's/-fno-fat-lto-objects//g'
+find -name '*.conf' -print0 | xargs -0 -r sed -i 's/-fuse-linker-plugin//g'
+find -name '*.conf' -print0 | xargs -0 -r sed -i 's/-mfloat-abi=softfp//g'
+make -j$(nproc) install
+cd "${CROSS_ROOT}/bin"
+ln -sf lrelease "lrelease-qt$(echo "${QT_VER}" | cut -d. -f1)"
 
-build_qbittorrent() {
-  cd "${SELF_DIR}/../../"
-  rm -fr build/CMakeCache.txt
-  cmake \
-    -B build \
-    -G "Ninja" \
-    -DQT6=ON \
-    -DGUI=off \
-    -DQT_HOST_PATH="/usr/src/qt-host/${qt_ver}/gcc_64/" \
-    -DSTACKTRACE=off \
-    -DBUILD_SHARED_LIBS=off \
-    -DCMAKE_INSTALL_PREFIX="${CROSS_PREFIX}" \
-    -DCMAKE_PREFIX_PATH="${QT_BASE_DIR}/lib/cmake/" \
-    -DCMAKE_BUILD_TYPE="Release" \
-    -DCMAKE_CXX_STANDARD="17" \
-    -DCMAKE_SYSTEM_NAME="${TARGET_HOST}" \
-    -DCMAKE_SYSTEM_PROCESSOR="${TARGET_ARCH}" \
-    -DCMAKE_SYSROOT="${CROSS_PREFIX}" \
-    -DCMAKE_CXX_COMPILER="${CROSS_HOST}-g++" \
-    -DCMAKE_EXE_LINKER_FLAGS="-static"
-  cmake --build build
-  cmake --install build
-  if [ x"${TARGET_HOST}" = x"Windows" ]; then
-    cp -fv "src/release/qbittorrent-nox.exe" /tmp/
-  else
-    cp -fv "${CROSS_PREFIX}/bin/qbittorrent-nox" /tmp/
-  fi
-}
+# libiconv
+if [ ! -f "${SELF_DIR}/libiconv.tar.gz" ]; then
+  wget -c -O "${SELF_DIR}/libiconv.tar.gz" "https://ftp.gnu.org/pub/gnu/libiconv/libiconv-${LIBICONV_VERSION}.tar.gz"
+fi
+tar -zxf "${SELF_DIR}/libiconv.tar.gz" --strip-components=1 -C /usr/src/libiconv/
+cd /usr/src/libiconv/
+./configure CXXFLAGS="-std=c++17" --host="${TOOLCHAIN_TARGET}" --prefix="${CROSS_PREFIX}" --enable-static --disable-shared --enable-silent-rules
+make -j$(nproc)
+make install
 
-prepare_cmake
-prepare_ninja
-prepare_zlib
-prepare_ssl
-prepare_boost
-prepare_qt
-prepare_libtorrent
-build_qbittorrent
+# libtorrent
+if [ ! -f "${SELF_DIR}/libtorrent.tar.gz" ]; then
+  wget -c -O "${SELF_DIR}/libtorrent.tar.gz" "https://github.com/arvidn/libtorrent/archive/${LIBTORRENT_BRANCH}.tar.gz"
+fi
+tar -zxf "${SELF_DIR}/libtorrent.tar.gz" --strip-components=1 -C /usr/src/libtorrent
+cd /usr/src/libtorrent
+if [ "${TARGET_HOST}" = 'win' ]; then
+  export LIBS="-lcrypt32 -lws2_32"
+  # musl.cc x86_64-w64-mingw32 toolchain not supports thread local
+  export CPPFLAGS='-D_WIN32_WINNT=0x0602 -DBOOST_NO_CXX11_THREAD_LOCAL'
+fi
+./bootstrap.sh CXXFLAGS="-std=c++17" --host="${TOOLCHAIN_TARGET}" --prefix="${CROSS_PREFIX}" --enable-static --disable-shared --enable-silent-rules --with-boost="${CROSS_PREFIX}" --with-libiconv
+# fix x86_64-w64-mingw32 build
+if [ "${TARGET_HOST}" = 'win' ]; then
+  find -type f \( -name '*.cpp' -o -name '*.hpp' \) -print0 |
+    xargs -0 -r sed -i 's/include\s*<condition_variable>/include "mingw.condition_variable.h"/g;
+                        s/include\s*<future>/include "mingw.future.h"/g;
+                        s/include\s*<invoke>/include "mingw.invoke.h"/g;
+                        s/include\s*<mutex>/include "mingw.mutex.h"/g;
+                        s/include\s*<shared_mutex>/include "mingw.shared_mutex.h"/g;
+                        s/include\s*<thread>/include "mingw.thread.h"/g'
+fi
+make -j$(nproc)
+make install
+unset LIBS CPPFLAGS
+
+# build qbittorrent
+cd "${SELF_DIR}/../../"
+if [ "${TARGET_HOST}" = 'win' ]; then
+  find \( -name '*.cpp' -o -name '*.h' \) -type f -print0 |
+    xargs -0 -r sed -i 's/Windows\.h/windows.h/g;
+      s/Shellapi\.h/shellapi.h/g;
+      s/Shlobj\.h/shlobj.h/g;
+      s/Ntsecapi\.h/ntsecapi.h/g'
+  export LIBS="-lmswsock"
+  export CPPFLAGS='-std=c++17 -D_WIN32_WINNT=0x0602'
+fi
+LIBS="${LIBS} -liconv" ./configure --host="${TOOLCHAIN_TARGET}" --prefix="${CROSS_PREFIX}" --disable-gui --with-boost="${CROSS_PREFIX}" CXXFLAGS="-std=c++17 ${CPPFLAGS}" LDFLAGS='-s -static --static'
+make -j$(nproc)
+make install
+unset LIBS CPPFLAGS
+if [ "${TARGET_HOST}" = 'win' ]; then
+  cp -fv "src/release/qbittorrent-nox.exe" /tmp/
+else
+  cp -fv "${CROSS_PREFIX}/bin/qbittorrent-nox" /tmp/
+fi
 
 # check
 "${RUNNER_CHECKER}" /tmp/qbittorrent-nox* --version 2>/dev/null
 
 # archive qbittorrent
-zip -j9v "${SELF_DIR}/qbittorrent-enhanced-nox_${CROSS_HOST}_static.zip" /tmp/qbittorrent-nox*
+zip -j9v "${SELF_DIR}/qbittorrent-nox_${CROSS_HOST}_static.zip" /tmp/qbittorrent-nox*

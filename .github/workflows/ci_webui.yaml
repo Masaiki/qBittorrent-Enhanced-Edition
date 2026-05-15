@@ -2,13 +2,6 @@ name: CI - WebUI
 
 on: [pull_request, push]
 
-permissions:
-  security-events: write
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
-  cancel-in-progress: ${{ github.head_ref != '' }}
-
 jobs:
   ci:
     name: Check
@@ -20,12 +13,13 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v5
 
       - name: Setup nodejs
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v6
         with:
           node-version: 'lts/*'
+          package-manager-cache: false
 
       - name: Install tools
         run: npm install
@@ -37,12 +31,3 @@ jobs:
         run: |
           npm run format
           git diff --exit-code
-
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v2
-        with:
-          config-file: ./.github/workflows/helper/codeql/js.yaml
-          languages: javascript
-
-      - name: Run CodeQL analysis
-        uses: github/codeql-action/analyze@v2

@@ -1,5 +1,3 @@
-name: Build and Release
-
 on:
   push:
     branches:
@@ -14,78 +12,95 @@ on:
 jobs:
   appimage:
     runs-on: ubuntu-latest
-    container: "ubuntu:20.04"
+    permissions:
+      contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-      - uses: actions/cache@v4
-        with:
-          path: |
-            /usr/src/
-            /var/cache/apt/
-          key: appimage-build-dependencies-cache-${{ github.sha }}
-          restore-keys: |
-            appimage-build-dependencies-cache-
+        uses: actions/checkout@v5
       - name: Build AppImage
-        run: .github/workflows/build_appimage.sh
-      - uses: actions/upload-artifact@v4
+        run: |
+          docker run --rm \
+            -e GITHUB_REPOSITORY="${GITHUB_REPOSITORY}" \
+            -v "${GITHUB_WORKSPACE}:/build" \
+            -w /build \
+            ubuntu:18.04 \
+            bash -lc "apt-get update && apt-get install -y sudo ca-certificates && sudo .github/workflows/build_appimage.sh"
+      - uses: actions/upload-artifact@v6
         with:
-          name: qBittorrent-Enhanced-Edition-x86_64.AppImage
-          path: ".github/workflows/qBittorrent-Enhanced-Edition*.AppImage*"
+          name: qBittorrent-Enhanced-Edition.AppImage
+          path: |
+            .github/workflows/qBittorrent-Enhanced-Edition.AppImage
+            .github/workflows/qBittorrent-Enhanced-Edition.AppImage.zsync
       - name: Upload Github Assets
         if: startsWith(github.ref, 'refs/tags/')
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: ".github/workflows/qBittorrent-Enhanced-Edition*.AppImage*"
-          tag: ${{ github.ref }}
-          overwrite: true
-          file_glob: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${GITHUB_REF_NAME}" \
+            .github/workflows/qBittorrent-Enhanced-Edition.AppImage* \
+            --clobber
+      - name: Setup tmate session
+        if: failure()
+        uses: mxschmitt/action-tmate@v3
+        timeout-minutes: 15
 
   # cross compile for some other platforms, like arm, mips, etc.
   cross-compile:
     runs-on: ubuntu-latest
-    container: "abcfy2/muslcc-toolchain-ubuntu:${{ matrix.cross_host }}"
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
-        cross_host:
-          # cross toolchain downloads from: https://musl.cc/
-          # you need to find the name ${cross_host}-cross.tgz
-          - arm-linux-musleabi
-          - arm-linux-musleabihf
-          - aarch64-linux-musl
-          - mips-linux-musl
-          - mipsel-linux-musl
-          - mips64-linux-musl
-          - mips64el-linux-musl
-          - x86_64-linux-musl
-          - i686-linux-musl
+        include:
+          # cross toolchain images from: https://hub.docker.com/r/abcfy2/muslcc-toolchain-ubuntu
+          # openssl_compiler choose from openssl source directory `./Configure LIST`
+          # qt_device choose from https://github.com/qt/qtbase/tree/dev/mkspecs/devices/
+          # qt_xplatform choose from https://github.com/qt/qtbase/tree/dev/mkspecs/
+          - cross_host: arm-linux-musleabi
+            openssl_compiler: linux-armv4
+            qt_device: linux-arm-generic-g++
+          - cross_host: aarch64-linux-musl
+            openssl_compiler: linux-aarch64
+            qt_device: linux-arm-generic-g++
+          - cross_host: x86_64-linux-musl
+            openssl_compiler: linux-x86_64
+            qt_device: linux-generic-g++
+          # - cross_host: x86_64-w64-mingw32
+          #   openssl_compiler: mingw64
+          #   qt_xplatform: win32-g++
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-      - uses: actions/cache@v4
-        with:
-          path: |
-            /usr/src/
-            /var/cache/apt/
-          key: cross-build-dependencies-cache-${{ matrix.cross_host }}-${{ github.sha }}
-          restore-keys: |
-            cross-build-dependencies-cache-${{ matrix.cross_host }}-
+        uses: actions/checkout@v5
       - name: cross compile nox-static
         env:
           CROSS_HOST: "${{ matrix.cross_host }}"
-        run: .github/workflows/cross_build.sh
-      - uses: actions/upload-artifact@v4
+          OPENSSL_COMPILER: "${{ matrix.openssl_compiler }}"
+          QT_DEVICE: "${{ matrix.qt_device }}"
+          QT_XPLATFORM: "${{matrix.qt_xplatform}}"
+        run: |
+          docker run --rm \
+            -e CROSS_HOST="${CROSS_HOST}" \
+            -e OPENSSL_COMPILER="${OPENSSL_COMPILER}" \
+            -e QT_DEVICE="${QT_DEVICE}" \
+            -e QT_XPLATFORM="${QT_XPLATFORM}" \
+            -v "${GITHUB_WORKSPACE}:/build" \
+            -w /build \
+            "abcfy2/muslcc-toolchain-ubuntu:${CROSS_HOST}" \
+            /build/.github/workflows/cross_build.sh
+      - uses: actions/upload-artifact@v6
         with:
-          name: qbittorrent-enhanced-nox_${{ matrix.cross_host }}_static
-          path: |
-            /tmp/qbittorrent-nox*
+          name: qbittorrent-nox_${{ matrix.cross_host }}_static
+          path: .github/workflows/qbittorrent-nox_${{ matrix.cross_host }}_static.zip
       - name: Upload Github Assets
         if: startsWith(github.ref, 'refs/tags/')
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: ".github/workflows/qbittorrent-enhanced-nox_${{ matrix.cross_host }}_static.zip"
-          tag: ${{ github.ref }}
-          overwrite: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${GITHUB_REF_NAME}" \
+            ".github/workflows/qbittorrent-nox_${{ matrix.cross_host }}_static.zip" \
+            --clobber
+      - name: Setup tmate session
+        if: failure()
+        uses: mxschmitt/action-tmate@v3
+        timeout-minutes: 60

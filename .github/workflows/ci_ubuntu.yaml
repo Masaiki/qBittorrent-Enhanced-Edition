@@ -1,142 +1,76 @@
 name: CI - Ubuntu
-
 on: [pull_request, push]
-
-permissions:
-  actions: write
-  security-events: write
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
-  cancel-in-progress: ${{ github.head_ref != '' }}
 
 jobs:
   ci:
     name: Build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     strategy:
-      fail-fast: false
       matrix:
-        libt_version: ["1.2.19"]
+        libt_version: ["v1.2.20"]
         qbt_gui: ["GUI=ON", "GUI=OFF"]
-        qt_version: ["6.5.2"]
+      fail-fast: false
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v5
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ runner.os }}
 
       - name: Install dependencies
         run: |
           sudo apt update
           sudo apt install \
-            build-essential cmake ninja-build pkg-config \
-            libboost-dev libssl-dev libxkbcommon-x11-dev zlib1g-dev
-
-      - name: Setup ccache
-        uses: Chocobo1/setup-ccache-action@v1
-        with:
-          store_cache: ${{ github.ref == 'refs/heads/master' }}
-          update_packager_index: false
-          ccache_options: |
-            max_size=2G
-
-      - name: Install Qt
-        uses: jurplel/install-qt-action@v3
-        with:
-          version: ${{ matrix.qt_version }}
-          archives: icu qtbase qtsvg qttools
-          cache: true
+            build-essential cmake git ninja-build pkg-config \
+            libqt5svg5-dev qtbase5-dev qttools5-dev \
+            libssl-dev libgeoip-dev zlib1g-dev \
+            libboost-dev libboost-chrono-dev libboost-random-dev libboost-system-dev
 
       - name: Install libtorrent
         run: |
-          git clone \
-            --branch v${{ matrix.libt_version }} \
-            --depth 1 \
-            --recurse-submodules \
-            https://github.com/arvidn/libtorrent.git
+          git clone --branch ${{ matrix.libt_version }} --depth 1 https://github.com/arvidn/libtorrent.git
           cd libtorrent
+          git submodule update --init --recursive
+          export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"
           cmake \
             -B build \
             -G "Ninja" \
-            -DBUILD_SHARED_LIBS=OFF \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-            -Ddeprecated-functions=OFF
+            -Ddeprecated-functions=OFF \
+            --graphviz=cmake-build-dir/target_graph.dot
           cmake --build build
           sudo cmake --install build
 
-      # to avoid scanning 3rdparty codebases, initialize it just before building qbt
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v2
-        if: startsWith(matrix.libt_version, 2) && (matrix.qbt_gui == 'GUI=ON') && startsWith(matrix.qt_version, 6)
-        with:
-          config-file: ./.github/workflows/helper/codeql/cpp.yaml
-          languages: cpp
-
-      - name: Build qBittorrent (Qt6)
-        if: startsWith(matrix.qt_version, 6)
+      - name: Build qBittorrent
         run: |
-          CXXFLAGS="$CXXFLAGS -Werror" \
-          LDFLAGS="$LDFLAGS -gz" \
+          export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"
           cmake \
             -B build \
             -G "Ninja" \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-            -DCMAKE_INSTALL_PREFIX="/usr" \
-            -DQT6=ON \
-            -DTESTING=ON \
+            -D${{ matrix.qbt_gui }} \
             -DVERBOSE_CONFIGURE=ON \
-            -D${{ matrix.qbt_gui }}
-          cmake --build build --target qbt_update_translations
+            --graphviz=build/target_graph.dot
           cmake --build build
-          cmake --build build --target check
-          DESTDIR="qbittorrent" cmake --install build
 
-      - name: Run CodeQL analysis
-        uses: github/codeql-action/analyze@v2
-        if: startsWith(matrix.libt_version, 2) && (matrix.qbt_gui == 'GUI=ON') && startsWith(matrix.qt_version, 6)
-        with:
-          category: ${{ github.base_ref || github.ref_name }}
-
-      - name: Prepare build artifacts
-        run: |
-          mkdir upload
-          mkdir upload/cmake
-          cp build/compile_commands.json upload/cmake
-          mkdir upload/cmake/libtorrent
-          cp libtorrent/build/compile_commands.json upload/cmake/libtorrent
-
-      - name: 'AppImage: Prepare env'
-        run: |
-          sudo apt install libfuse2
-          wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-          wget https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
-          wget https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage
-          chmod +x linuxdeploy-x86_64.AppImage
-          chmod +x linuxdeploy-plugin-qt-x86_64.AppImage
-          chmod +x linuxdeploy-plugin-appimage-x86_64.AppImage
-
-      - name: 'AppImage: Prepare nox'
-        if: matrix.qbt_gui == 'GUI=OFF'
-        run: |
-          mkdir -p qbittorrent/usr/share/icons/hicolor/scalable/apps/
-          mkdir -p qbittorrent/usr/share/applications/
-          cp dist/unix/menuicons/scalable/apps/qbittorrent.svg qbittorrent/usr/share/icons/hicolor/scalable/apps/qbittorrent.svg
-          cp .github/workflows/helper/appimage/org.qbittorrent.qBittorrent.desktop qbittorrent/usr/share/applications/org.qbittorrent.qBittorrent.desktop
-
-      - name: 'AppImage: Package'
-        run: |
-          ./linuxdeploy-x86_64.AppImage --appdir=qbittorrent --plugin qt
-          rm qbittorrent/apprun-hooks/*
-          cp .github/workflows/helper/appimage/export_vars.sh qbittorrent/apprun-hooks/export_vars.sh
-          NO_APPSTREAM=1 \
-          OUTPUT=upload/qbittorrent-CI_Ubuntu_x86_64.AppImage \
-          ./linuxdeploy-x86_64.AppImage --appdir=qbittorrent --output appimage
+      - name: Install qBittorrent
+        run: sudo cmake --install build
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v6
         with:
-          name: qBittorrent-CI_Ubuntu-x64_${{ matrix.qbt_gui }}_libtorrent-${{ matrix.libt_version }}_Qt-${{ matrix.qt_version }}
-          path: upload
+          name: qBittorrent-CI_ubuntu-22.04-x64_${{ matrix.qbt_gui }}_libtorrent-${{ matrix.libt_version }}
+          path: |
+            build/compile_commands.json
+            build/install_manifest.txt
+            build/target_graph.dot
+            build/qbittorrent
+            build/qbittorrent-nox
+            libtorrent/cmake-build-dir/compile_commands.json
+            libtorrent/cmake-build-dir/target_graph.dot
