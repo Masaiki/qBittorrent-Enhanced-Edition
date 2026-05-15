@@ -1,6 +1,10 @@
 name: CI - Ubuntu
 on: [pull_request, push]
 
+env:
+  VCPKG_COMMIT: 84bab45d415d22042bd0b9081aea57f362da3f35 # 2025.12.12, Qt 5.15.18
+  VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/.cache/vcpkg/archives
+
 jobs:
   ci:
     name: Build
@@ -8,7 +12,6 @@ jobs:
 
     strategy:
       matrix:
-        libt_version: ["v1.2.20"]
         qbt_gui: ["GUI=ON", "GUI=OFF"]
       fail-fast: false
 
@@ -21,30 +24,43 @@ jobs:
         with:
           key: ${{ runner.os }}
 
-      - name: Install dependencies
+      - name: Install host tools
         run: |
           sudo apt update
           sudo apt install \
-            build-essential cmake git ninja-build pkg-config \
-            libqt5svg5-dev qtbase5-dev qtbase5-private-dev qttools5-dev \
-            libssl-dev libgeoip-dev zlib1g-dev \
-            libboost-dev libboost-chrono-dev libboost-random-dev libboost-system-dev
+            autoconf automake autoconf-archive build-essential curl git libgl1-mesa-dev libglu1-mesa-dev \
+            libltdl-dev libtool libx11-dev libx11-xcb-dev libxcb1-dev libxcb-glx0-dev libxcb-icccm4-dev \
+            libxcb-image0-dev libxcb-keysyms1-dev libxcb-render0-dev libxcb-render-util0-dev libxcb-shape0-dev \
+            libxcb-shm0-dev libxcb-sync-dev libxcb-util-dev libxcb-xfixes0-dev libxcb-xinerama0-dev \
+            libxcb-xkb-dev libxext-dev libxfixes-dev libxi-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libxrender-dev cmake ninja-build pkg-config python3 tar unzip zip
 
-      - name: Install libtorrent
+      - name: Setup vcpkg
         run: |
-          git clone --branch ${{ matrix.libt_version }} --depth 1 https://github.com/arvidn/libtorrent.git
-          cd libtorrent
-          git submodule update --init --recursive
-          export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"
-          cmake \
-            -B build \
-            -G "Ninja" \
-            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-            -Ddeprecated-functions=OFF \
-            --graphviz=cmake-build-dir/target_graph.dot
-          cmake --build build
-          sudo cmake --install build
+          git clone --filter=blob:none https://github.com/microsoft/vcpkg.git "$RUNNER_TEMP/vcpkg"
+          git -C "$RUNNER_TEMP/vcpkg" checkout --force "$VCPKG_COMMIT"
+          "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
+          echo "VCPKG_ROOT=$RUNNER_TEMP/vcpkg" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/vcpkg/vcpkg" version
+
+      - name: Cache vcpkg binary archives
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-${{ runner.os }}-x64-linux-${{ matrix.qbt_gui }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg/**', '.github/workflows/ci_ubuntu.yaml') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-x64-linux-${{ matrix.qbt_gui }}-${{ env.VCPKG_COMMIT }}-
+            vcpkg-${{ runner.os }}-x64-linux-
+
+      - name: Install dependencies
+        run: |
+          "$VCPKG_ROOT/vcpkg" install \
+            --x-manifest-root="${{ github.workspace }}" \
+            --triplet=x64-linux \
+            --host-triplet=x64-linux \
+            --overlay-ports="${{ github.workspace }}/vcpkg" \
+            --clean-after-build
 
       - name: Build qBittorrent
         run: |
@@ -54,6 +70,12 @@ jobs:
             -G "Ninja" \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_MANIFEST_MODE=ON \
+            -DVCPKG_MANIFEST_DIR="${{ github.workspace }}" \
+            -DVCPKG_OVERLAY_PORTS="${{ github.workspace }}/vcpkg" \
+            -DVCPKG_TARGET_TRIPLET=x64-linux \
+            -DVCPKG_HOST_TRIPLET=x64-linux \
             -D${{ matrix.qbt_gui }} \
             -DVERBOSE_CONFIGURE=ON \
             --graphviz=build/target_graph.dot
@@ -65,12 +87,10 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v6
         with:
-          name: qBittorrent-CI_ubuntu-22.04-x64_${{ matrix.qbt_gui }}_libtorrent-${{ matrix.libt_version }}
+          name: qBittorrent-CI_ubuntu-22.04-x64_${{ matrix.qbt_gui }}
           path: |
             build/compile_commands.json
             build/install_manifest.txt
             build/target_graph.dot
             build/qbittorrent
             build/qbittorrent-nox
-            libtorrent/cmake-build-dir/compile_commands.json
-            libtorrent/cmake-build-dir/target_graph.dot

@@ -4,5 +4,5 @@
   "description": "OpenSSL is an open source toolkit for SSL/TLS.",
   "homepage": "https://www.openssl.org",
   "license": "OpenSSL",
-  "supports": "windows & !uwp"
+  "supports": "!uwp"
 }

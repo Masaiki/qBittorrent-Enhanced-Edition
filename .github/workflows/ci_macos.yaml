@@ -1,6 +1,10 @@
 name: CI - macOS
 on: [pull_request, push]
 
+env:
+  VCPKG_COMMIT: 84bab45d415d22042bd0b9081aea57f362da3f35 # 2025.12.12, Qt 5.15.18
+  VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/.cache/vcpkg/archives
+
 jobs:
   ci:
     strategy:
@@ -8,13 +12,13 @@ jobs:
         include:
           - arch: x86
             target_arch: x86_64
+            vcpkg_triplet: x64-osx
             os: macos-14
-            libt_version: "v1.2.20"
             qbt_gui: "GUI=ON"
           - arch: arm
             target_arch: arm64
+            vcpkg_triplet: arm64-osx
             os: macos-14
-            libt_version: "v1.2.20"
             qbt_gui: "GUI=ON"
       fail-fast: false
     runs-on: ${{ matrix.os }}
@@ -22,10 +26,6 @@ jobs:
 
     env:
       MACOSX_DEPLOYMENT_TARGET: "11.0"
-      QT_VERSION: "5.15.18"
-      OPENSSL_VERSION: "1.1.1w"
-      BOOST_VERSION: "1.86.0"
-      DEPS_PREFIX: "${{ github.workspace }}/../macos-deps-${{ matrix.target_arch }}"
 
     steps:
       - name: Checkout repository
@@ -42,18 +42,32 @@ jobs:
           brew install \
             cmake ninja ccache pkgconf
 
-      - name: Cache source-built dependencies
+      - name: Setup vcpkg
+        run: |
+          git clone --filter=blob:none https://github.com/microsoft/vcpkg.git "$RUNNER_TEMP/vcpkg"
+          git -C "$RUNNER_TEMP/vcpkg" checkout --force "$VCPKG_COMMIT"
+          "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
+          echo "VCPKG_ROOT=$RUNNER_TEMP/vcpkg" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/vcpkg/vcpkg" version
+
+      - name: Cache vcpkg binary archives
         uses: actions/cache@v4
         with:
-          path: ${{ env.DEPS_PREFIX }}
-          key: macos-${{ matrix.target_arch }}-qt-${{ env.QT_VERSION }}-openssl-${{ env.OPENSSL_VERSION }}-boost-${{ env.BOOST_VERSION }}-libtorrent-${{ matrix.libt_version }}-${{ hashFiles('.github/workflows/build_macos_deps.sh') }}
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-${{ runner.os }}-${{ matrix.vcpkg_triplet }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg/**', '.github/workflows/ci_macos.yaml') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-${{ matrix.vcpkg_triplet }}-${{ env.VCPKG_COMMIT }}-
+            vcpkg-${{ runner.os }}-${{ matrix.vcpkg_triplet }}-
 
-      - name: Build dependencies
-        env:
-          TARGET_ARCH: ${{ matrix.target_arch }}
-          LIBTORRENT_VERSION: ${{ matrix.libt_version }}
-          BUILD_ROOT: ${{ runner.temp }}/macos-deps-build-${{ matrix.target_arch }}
-        run: .github/workflows/build_macos_deps.sh
+      - name: Install dependencies
+        run: |
+          "$VCPKG_ROOT/vcpkg" install \
+            --x-manifest-root="${{ github.workspace }}" \
+            --triplet=${{ matrix.vcpkg_triplet }} \
+            --host-triplet=${{ matrix.vcpkg_triplet }} \
+            --overlay-ports="${{ github.workspace }}/vcpkg" \
+            --clean-after-build
 
       - name: Build qBittorrent
         run: |
@@ -63,17 +77,14 @@ jobs:
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DCMAKE_OSX_ARCHITECTURES="${{ matrix.target_arch }}" \
-            -DCMAKE_IGNORE_PREFIX_PATH="$CMAKE_IGNORE_PREFIX_PATH" \
-            -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_MANIFEST_MODE=ON \
+            -DVCPKG_MANIFEST_DIR="${{ github.workspace }}" \
+            -DVCPKG_OVERLAY_PORTS="${{ github.workspace }}/vcpkg" \
+            -DVCPKG_TARGET_TRIPLET=${{ matrix.vcpkg_triplet }} \
+            -DVCPKG_HOST_TRIPLET=${{ matrix.vcpkg_triplet }} \
             -D${{ matrix.qbt_gui }} \
-            -DBOOST_ROOT="$BOOST_ROOT" \
-            -DBoost_ROOT="$BOOST_ROOT" \
-            -DVERBOSE_CONFIGURE=ON \
-            -DOPENSSL_ROOT_DIR="$OPENSSL_ROOT_DIR" \
-            -DOPENSSL_INCLUDE_DIR="$OPENSSL_ROOT_DIR/include" \
-            -DOPENSSL_SSL_LIBRARY="$OPENSSL_ROOT_DIR/lib/libssl.dylib" \
-            -DOPENSSL_CRYPTO_LIBRARY="$OPENSSL_ROOT_DIR/lib/libcrypto.dylib" \
-            -DQt5_DIR="$QT_ROOT/lib/cmake/Qt5"
+            -DVERBOSE_CONFIGURE=ON
           cmake --build build-${{ matrix.target_arch }}
 
       - name: Prepare build artifacts
@@ -84,18 +95,16 @@ jobs:
           fi
 
           pushd build-${{ matrix.target_arch }}
-          "$QT_ROOT/bin/macdeployqt" "$appName.app" -dmg -no-strip
+          "${{ github.workspace }}/vcpkg_installed/${{ matrix.vcpkg_triplet }}/tools/qt5/bin/macdeployqt" "$appName.app" -dmg -no-strip
           popd
 
           mkdir upload
           cp "build-${{ matrix.target_arch }}/$appName.dmg" upload
           mkdir upload/cmake
           cp build-${{ matrix.target_arch }}/compile_commands.json upload/cmake
-          mkdir upload/cmake/libtorrent
-          cp libtorrent/build-${{ matrix.target_arch }}/compile_commands.json upload/cmake/libtorrent
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v6
         with:
-          name: qBittorrent-CI_macOS_${{ matrix.qbt_gui }}_libtorrent-${{ matrix.libt_version }}_${{ matrix.arch }}
+          name: qBittorrent-CI_macOS_${{ matrix.qbt_gui }}_${{ matrix.arch }}
           path: upload

@@ -1,7 +1,3 @@
-if(NOT VCPKG_TARGET_IS_WINDOWS)
-    message(FATAL_ERROR "This OpenSSL 1.1.1w overlay is only intended for the Windows CI build.")
-endif()
-
 vcpkg_from_git(
     OUT_SOURCE_PATH SOURCE_PATH
     URL https://github.com/openssl/openssl.git
@@ -9,21 +5,47 @@ vcpkg_from_git(
 )
 
 vcpkg_find_acquire_program(PERL)
-vcpkg_find_acquire_program(NASM)
 
 get_filename_component(PERL_PATH "${PERL}" DIRECTORY)
-get_filename_component(NASM_PATH "${NASM}" DIRECTORY)
 vcpkg_add_to_path("${PERL_PATH}")
-vcpkg_add_to_path("${NASM_PATH}")
 
-if(VCPKG_TARGET_ARCHITECTURE STREQUAL "x64")
-    set(OPENSSL_PLATFORM VC-WIN64A)
-elseif(VCPKG_TARGET_ARCHITECTURE STREQUAL "arm64")
-    set(OPENSSL_PLATFORM VC-WIN64-ARM)
-elseif(VCPKG_TARGET_ARCHITECTURE STREQUAL "x86")
-    set(OPENSSL_PLATFORM VC-WIN32)
+if(VCPKG_TARGET_IS_WINDOWS)
+    vcpkg_find_acquire_program(NASM)
+    get_filename_component(NASM_PATH "${NASM}" DIRECTORY)
+    vcpkg_add_to_path("${NASM_PATH}")
+
+    if(VCPKG_TARGET_ARCHITECTURE STREQUAL "x64")
+        set(OPENSSL_PLATFORM VC-WIN64A)
+    elseif(VCPKG_TARGET_ARCHITECTURE STREQUAL "arm64")
+        set(OPENSSL_PLATFORM VC-WIN64-ARM)
+    elseif(VCPKG_TARGET_ARCHITECTURE STREQUAL "x86")
+        set(OPENSSL_PLATFORM VC-WIN32)
+    else()
+        message(FATAL_ERROR "Unsupported OpenSSL target architecture: ${VCPKG_TARGET_ARCHITECTURE}")
+    endif()
+    set(OPENSSL_BUILD_COMMAND nmake /nologo)
+elseif(VCPKG_TARGET_IS_OSX)
+    if(VCPKG_TARGET_ARCHITECTURE STREQUAL "x64")
+        set(OPENSSL_PLATFORM darwin64-x86_64-cc)
+    elseif(VCPKG_TARGET_ARCHITECTURE STREQUAL "arm64")
+        set(OPENSSL_PLATFORM darwin64-arm64-cc)
+    else()
+        message(FATAL_ERROR "Unsupported OpenSSL target architecture: ${VCPKG_TARGET_ARCHITECTURE}")
+    endif()
+    set(OPENSSL_BUILD_COMMAND make -j${VCPKG_CONCURRENCY})
+elseif(VCPKG_TARGET_IS_LINUX)
+    if(VCPKG_TARGET_ARCHITECTURE STREQUAL "x64")
+        set(OPENSSL_PLATFORM linux-x86_64)
+    elseif(VCPKG_TARGET_ARCHITECTURE STREQUAL "arm64")
+        set(OPENSSL_PLATFORM linux-aarch64)
+    elseif(VCPKG_TARGET_ARCHITECTURE STREQUAL "x86")
+        set(OPENSSL_PLATFORM linux-x86)
+    else()
+        message(FATAL_ERROR "Unsupported OpenSSL target architecture: ${VCPKG_TARGET_ARCHITECTURE}")
+    endif()
+    set(OPENSSL_BUILD_COMMAND make -j${VCPKG_CONCURRENCY})
 else()
-    message(FATAL_ERROR "Unsupported OpenSSL target architecture: ${VCPKG_TARGET_ARCHITECTURE}")
+    message(FATAL_ERROR "Unsupported OpenSSL target platform")
 endif()
 
 set(OPENSSL_OPTIONS no-tests)
@@ -43,13 +65,13 @@ vcpkg_execute_required_process(
 )
 
 vcpkg_execute_required_process(
-    COMMAND nmake /nologo
+    COMMAND ${OPENSSL_BUILD_COMMAND}
     WORKING_DIRECTORY "${SOURCE_PATH}"
     LOGNAME build-${TARGET_TRIPLET}
 )
 
 vcpkg_execute_required_process(
-    COMMAND nmake /nologo install_sw
+    COMMAND ${OPENSSL_BUILD_COMMAND} install_sw
     WORKING_DIRECTORY "${SOURCE_PATH}"
     LOGNAME install-${TARGET_TRIPLET}
 )

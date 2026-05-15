@@ -16,7 +16,10 @@
     },
     "qt5-svg",
     "qt5-tools",
-    "qt5-winextras"
+    {
+      "name": "qt5-winextras",
+      "platform": "windows"
+    }
   ],
   "overrides": [
     {
