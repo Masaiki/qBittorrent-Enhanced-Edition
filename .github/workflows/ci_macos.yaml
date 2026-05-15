@@ -40,7 +40,7 @@ jobs:
         run: |
           brew update > /dev/null
           brew install \
-            cmake ninja ccache pkgconf
+            autoconf automake cmake libtool ninja ccache pkgconf
 
       - name: Setup vcpkg
         run: |
