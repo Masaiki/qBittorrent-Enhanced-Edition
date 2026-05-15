@@ -58,9 +58,11 @@ jobs:
           mkdir -p "${{ github.workspace }}/triplets_overlay"
           cat > "${{ github.workspace }}/triplets_overlay/${{ matrix.vcpkg_triplet }}.cmake" <<EOF
           set(VCPKG_TARGET_ARCHITECTURE ${{ matrix.vcpkg_arch }})
-          set(VCPKG_CMAKE_SYSTEM_NAME Darwin)
           set(VCPKG_CRT_LINKAGE dynamic)
           set(VCPKG_LIBRARY_LINKAGE static)
+          set(VCPKG_CMAKE_SYSTEM_NAME Darwin)
+          set(VCPKG_OSX_ARCHITECTURES ${{ matrix.target_arch }})
+          set(VCPKG_OSX_DEPLOYMENT_TARGET 11.0)
           set(VCPKG_BUILD_TYPE release)
           EOF
 
@@ -91,6 +93,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DCMAKE_OSX_ARCHITECTURES="${{ matrix.target_arch }}" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET" \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_MANIFEST_MODE=ON \
             -DVCPKG_MANIFEST_DIR="${{ github.workspace }}" \
