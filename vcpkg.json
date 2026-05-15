@@ -5,6 +5,7 @@
   "builtin-baseline": "84bab45d415d22042bd0b9081aea57f362da3f35",
   "dependencies": [
     "boost-circular-buffer",
+    "boost-stacktrace",
     "libtorrent",
     "openssl",
     {
@@ -212,6 +213,10 @@
     },
     {
       "name": "boost-smart-ptr",
+      "version": "1.86.0"
+    },
+    {
+      "name": "boost-stacktrace",
       "version": "1.86.0"
     },
     {

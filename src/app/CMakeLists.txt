@@ -127,6 +127,9 @@ if (STACKTRACE)
         stacktrace.cpp
     )
 
+    find_package(Boost REQUIRED COMPONENTS stacktrace)
+    target_link_libraries(qbt_app PRIVATE Boost::stacktrace)
+
     if (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
         target_compile_definitions(qbt_app PRIVATE BOOST_STACKTRACE_GNU_SOURCE_NOT_REQUIRED)
         target_link_options(qbt_app PUBLIC -rdynamic)
