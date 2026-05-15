@@ -12,12 +12,14 @@ jobs:
         include:
           - arch: x86
             target_arch: x86_64
-            vcpkg_triplet: x64-osx
+            vcpkg_arch: x64
+            vcpkg_triplet: x64-osx-release
             os: macos-14
             qbt_gui: "GUI=ON"
           - arch: arm
             target_arch: arm64
-            vcpkg_triplet: arm64-osx
+            vcpkg_arch: arm64
+            vcpkg_triplet: arm64-osx-release
             os: macos-14
             qbt_gui: "GUI=ON"
       fail-fast: false
@@ -51,11 +53,20 @@ jobs:
           echo "VCPKG_ROOT=$RUNNER_TEMP/vcpkg" >> "$GITHUB_ENV"
           "$RUNNER_TEMP/vcpkg/vcpkg" version
 
+      - name: Configure vcpkg triplet overlay
+        run: |
+          mkdir -p "${{ github.workspace }}/triplets_overlay"
+          cat > "${{ github.workspace }}/triplets_overlay/${{ matrix.vcpkg_triplet }}.cmake" <<EOF
+          set(VCPKG_TARGET_ARCHITECTURE ${{ matrix.vcpkg_arch }})
+          set(VCPKG_LIBRARY_LINKAGE static)
+          set(VCPKG_BUILD_TYPE release)
+          EOF
+
       - name: Cache vcpkg binary archives
         uses: actions/cache@v4
         with:
           path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
-          key: vcpkg-${{ runner.os }}-${{ matrix.vcpkg_triplet }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg/**', '.github/workflows/ci_macos.yaml') }}
+          key: vcpkg-${{ runner.os }}-${{ matrix.vcpkg_triplet }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg/**', 'triplets_overlay/*.cmake', '.github/workflows/ci_macos.yaml') }}
           restore-keys: |
             vcpkg-${{ runner.os }}-${{ matrix.vcpkg_triplet }}-${{ env.VCPKG_COMMIT }}-
             vcpkg-${{ runner.os }}-${{ matrix.vcpkg_triplet }}-
@@ -67,6 +78,7 @@ jobs:
             --triplet=${{ matrix.vcpkg_triplet }} \
             --host-triplet=${{ matrix.vcpkg_triplet }} \
             --overlay-ports="${{ github.workspace }}/vcpkg" \
+            --overlay-triplets="${{ github.workspace }}/triplets_overlay" \
             --clean-after-build
 
       - name: Build qBittorrent
@@ -81,6 +93,7 @@ jobs:
             -DVCPKG_MANIFEST_MODE=ON \
             -DVCPKG_MANIFEST_DIR="${{ github.workspace }}" \
             -DVCPKG_OVERLAY_PORTS="${{ github.workspace }}/vcpkg" \
+            -DVCPKG_OVERLAY_TRIPLETS="${{ github.workspace }}/triplets_overlay" \
             -DVCPKG_TARGET_TRIPLET=${{ matrix.vcpkg_triplet }} \
             -DVCPKG_HOST_TRIPLET=${{ matrix.vcpkg_triplet }} \
             -D${{ matrix.qbt_gui }} \
