@@ -1,6 +1,10 @@
 name: CI - Windows
 on: [pull_request, push]
 
+env:
+  VCPKG_COMMIT: 84bab45d415d22042bd0b9081aea57f362da3f35 # 2025.12.12, Qt 5.15.18
+  VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\.cache\vcpkg\archives
+
 jobs:
   ci:
     name: Build (${{ matrix.arch }})
@@ -35,9 +39,8 @@ jobs:
           if (-not $env:VCPKG_INSTALLATION_ROOT) {
             $env:VCPKG_INSTALLATION_ROOT = "C:/vcpkg"
           }
-          $vcpkgCommit = "84bab45d415d22042bd0b9081aea57f362da3f35" # 2025.12.12, Qt 5.15.18
-          git -C "$env:VCPKG_INSTALLATION_ROOT" fetch --depth=1 origin $vcpkgCommit
-          git -C "$env:VCPKG_INSTALLATION_ROOT" checkout --force $vcpkgCommit
+          git -C "$env:VCPKG_INSTALLATION_ROOT" fetch --depth=1 origin $env:VCPKG_COMMIT
+          git -C "$env:VCPKG_INSTALLATION_ROOT" checkout --force $env:VCPKG_COMMIT
           & "$env:VCPKG_INSTALLATION_ROOT/bootstrap-vcpkg.bat" -disableMetrics
           "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
           "VCPKG_FEATURE_FLAGS=manifests,versions" >> $env:GITHUB_ENV
@@ -56,6 +59,15 @@ jobs:
           set(VCPKG_LIBRARY_LINKAGE static)
           set(VCPKG_BUILD_TYPE release)
           "@ | Set-Content "${{ github.workspace }}/triplets_overlay/${{ matrix.vcpkg_triplet }}.cmake"
+
+      - name: Cache vcpkg binary archives
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-${{ runner.os }}-${{ matrix.arch }}-${{ matrix.vcpkg_triplet }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg/**', 'triplets_overlay/*.cmake', '.github/workflows/ci_windows.yaml') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-${{ matrix.arch }}-${{ matrix.vcpkg_triplet }}-${{ env.VCPKG_COMMIT }}-
+            vcpkg-${{ runner.os }}-${{ matrix.arch }}-${{ matrix.vcpkg_triplet }}-
 
       # clear buildtrees after each package installation to reduce disk space requirements
       - name: Install dependencies

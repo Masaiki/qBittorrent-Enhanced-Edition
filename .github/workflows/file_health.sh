@@ -11,6 +11,7 @@ regressions=0
 # exclusions (these are just grep extended regular expressions to match against paths relative to the root of the repository)
 exclusions_nonutf8='(.*(7z|gif|ic(ns|o)|png|qm|zip))'
 exclusions_bom='src/base/unicodestrings.h'
+exclusions_cr='test/testdata/crlf.txt'
 exclusions_tw='(*.ts)|src/webui/www/private/scripts/lib/*'
 exclusions_trailing_newline='configure'
 exclusions_no_lf='(*.ts)|(.*svg)|compile_commands.json|src/webui/www/private/scripts/lib/*'
@@ -35,6 +36,7 @@ regressions=$((regressions+$?))
 echo -e "\n*** Detect usage of CR byte ***\n"
 
 grep --exclude-dir={.git,build} -rIlU $'\x0D' | sort \
+    | grep -E -v -e "${exclusions_cr}" \
     | tee >(echo -e "--> Usage of CR byte: found" "$(wc -l < /dev/stdin)" "regression(s)\n") \
     | xargs -I my_input -0 bash -c 'echo "my_input"; test "$(echo -n "my_input" | wc -l)" -eq 0'
 regressions=$((regressions+$?))
