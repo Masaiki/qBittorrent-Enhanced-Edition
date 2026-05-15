@@ -127,16 +127,22 @@ if (STACKTRACE)
         stacktrace.cpp
     )
 
-    find_package(Boost REQUIRED COMPONENTS stacktrace)
-    target_link_libraries(qbt_app PRIVATE Boost::stacktrace)
-
-    if (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
+        find_package(boost_stacktrace_windbg CONFIG REQUIRED)
+        target_link_libraries(qbt_app PRIVATE Boost::stacktrace_windbg)
+    elseif (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+        find_package(Boost REQUIRED COMPONENTS stacktrace)
+        target_link_libraries(qbt_app PRIVATE Boost::stacktrace)
         target_compile_definitions(qbt_app PRIVATE BOOST_STACKTRACE_GNU_SOURCE_NOT_REQUIRED)
         target_link_options(qbt_app PUBLIC -rdynamic)
     elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        find_package(Boost REQUIRED COMPONENTS stacktrace)
+        target_link_libraries(qbt_app PRIVATE Boost::stacktrace)
         target_link_libraries(qbt_app PUBLIC ${CMAKE_DL_LIBS})
         target_link_options(qbt_app PUBLIC -rdynamic)
-    elseif (CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    endif()
+
+    if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
         if (MSVC)
             target_compile_options(qbt_app PRIVATE /Zi)
             target_link_options(qbt_app PUBLIC
