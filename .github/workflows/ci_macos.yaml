@@ -113,7 +113,10 @@ jobs:
           fi
 
           pushd build-${{ matrix.target_arch }}
-          "${{ github.workspace }}/vcpkg_installed/${{ matrix.vcpkg_triplet }}/tools/qt5/bin/macdeployqt" "$appName.app" -dmg -no-strip
+          "${{ github.workspace }}/vcpkg_installed/${{ matrix.vcpkg_triplet }}/tools/qt5/bin/macdeployqt" "$appName.app" -no-strip
+          codesign --force --deep --sign - "$appName.app"
+          codesign --verify --deep --strict --verbose=2 "$appName.app"
+          hdiutil create -volname "$appName" -srcfolder "$appName.app" -ov -format UDZO "$appName.dmg"
           popd
 
           mkdir upload
