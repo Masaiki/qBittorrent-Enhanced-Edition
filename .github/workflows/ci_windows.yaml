@@ -24,6 +24,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
+      - name: Get qBittorrent version
+        id: qbt-version
+        run: |
+          $version = (Select-String -Path configure.ac -Pattern 'AC_INIT\(\[qbittorrent\], \[([^\]]+)\]' | Select-Object -First 1).Matches[0].Groups[1].Value
+          "version=$version" >> $env:GITHUB_OUTPUT
+
       - name: Install build tools
         run: |
           choco install ninja
@@ -94,7 +100,7 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v6
         with:
-          name: qBittorrent-CI_Windows-${{ matrix.arch }}
+          name: qBittorrent-CI_${{ steps.qbt-version.outputs.version }}_Windows-${{ matrix.arch }}
           path: |
             build/compile_commands.json
             build/qbittorrent.exe
