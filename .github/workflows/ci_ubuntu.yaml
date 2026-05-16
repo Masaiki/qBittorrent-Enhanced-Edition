@@ -25,6 +25,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
+      - name: Get qBittorrent version
+        id: qbt-version
+        run: |
+          version="$(sed -n 's/^AC_INIT(\[qbittorrent\], \[\([^]]*\)\].*/\1/p' configure.ac)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1.2
         with:
@@ -107,7 +113,7 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v6
         with:
-          name: qBittorrent-CI_ubuntu-22.04-x64_${{ matrix.qbt_gui }}
+          name: qBittorrent-CI_${{ steps.qbt-version.outputs.version }}_ubuntu-22.04-x64_${{ matrix.qbt_gui }}
           path: |
             build/compile_commands.json
             build/install_manifest.txt

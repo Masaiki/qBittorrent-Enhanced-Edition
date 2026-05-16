@@ -33,6 +33,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
+      - name: Get qBittorrent version
+        id: qbt-version
+        run: |
+          version="$(sed -n 's/^AC_INIT(\[qbittorrent\], \[\([^]]*\)\].*/\1/p' configure.ac)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1.2
         with:
@@ -128,5 +134,5 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v6
         with:
-          name: qBittorrent-CI_macOS_${{ matrix.qbt_gui }}_${{ matrix.arch }}
+          name: qBittorrent-CI_${{ steps.qbt-version.outputs.version }}_macOS_${{ matrix.qbt_gui }}_${{ matrix.arch }}
           path: upload
